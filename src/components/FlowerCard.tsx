@@ -32,12 +32,15 @@ export function FlowerCard({
       onDragStart={onDragStart}
       onClick={() => onActivate(flower)}
       aria-pressed={selected}
-      className={`group flex flex-col items-center gap-1 rounded-lg border bg-garden-deep/50 p-2 transition
+      className={`group flex w-full min-w-0 flex-col items-center gap-1 rounded-lg border bg-garden-deep/50 p-2 transition
         hover:-translate-y-0.5 hover:border-garden-mint focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan
         ${selected ? "border-garden-gold ring-2 ring-garden-gold/60" : "border-garden-moss/70"}`}
     >
       <FlowerSprite flower={flower} size="md" sway />
-      <span className="w-full truncate text-center font-pixel text-[11px] text-garden-cream">
+      {/* Name wraps to ≤2 lines (centered, hyphen-safe) — never clipped mid-word. The
+          nowrap `truncate` here previously forced each card's min-content to the full
+          single-line name, overflowing the grid track. */}
+      <span className="line-clamp-2 w-full break-words text-center font-pixel text-[11px] leading-tight text-garden-cream">
         {flowerLabel(flower.visualSpeciesId, flower.flowerIndex)}
       </span>
       <div className="flex flex-wrap items-center justify-center gap-1">

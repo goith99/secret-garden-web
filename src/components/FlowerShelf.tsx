@@ -18,9 +18,11 @@ export function FlowerShelf({
   const inPot = new Set([potA?.id, potB?.id].filter(Boolean) as string[]);
 
   return (
-    <div className={`grid gap-2 ${gridClassName}`}>
+    <div className={`grid content-start gap-2 ${gridClassName}`}>
       {shelf.map((f) => (
-        <div key={f.id} className={`relative ${inPot.has(f.id) ? "opacity-45" : ""}`}>
+        // min-w-0 lets each grid item shrink to its track (default min-width:auto would
+        // keep it at content size and overflow the column).
+        <div key={f.id} className={`relative flex min-w-0 ${inPot.has(f.id) ? "opacity-45" : ""}`}>
           <FlowerCard flower={f} selected={selectedFlowerId === f.id} onActivate={onActivate} />
           {inPot.has(f.id) && (
             <span className="pointer-events-none absolute inset-x-0 top-1 text-center font-pixel text-[9px] uppercase tracking-wide text-garden-gold">
