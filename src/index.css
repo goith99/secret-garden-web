@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-garden-deep text-garden-cream font-body;
+    /* Cozy greenhouse backdrop: layered radial glows (cyan / lavender / gold) over deep
+       green. Pure CSS — no image asset, keeps the bundle light. */
+    background-image:
+      radial-gradient(900px 500px at 12% -10%, rgba(108, 199, 207, 0.14), transparent 60%),
+      radial-gradient(800px 520px at 100% 0%, rgba(193, 174, 240, 0.12), transparent 55%),
+      radial-gradient(700px 600px at 50% 120%, rgba(230, 194, 92, 0.1), transparent 60%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer components {
+  /* Reusable wood/glass panel framing used by the three columns and mobile cards. */
+  .gh-panel {
+    @apply rounded-xl border border-garden-moss/70 bg-garden-green/60 shadow-panel;
+  }
+
+  .gh-title {
+    @apply font-pixel uppercase tracking-[0.18em] text-garden-mint;
+  }
+
+  /* Thin botanical scrollbar for the internally-scrolling panels. */
+  .gh-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: theme("colors.garden.moss") transparent;
+  }
+  .gh-scroll::-webkit-scrollbar {
+    width: 8px;
+  }
+  .gh-scroll::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-garden-moss;
+  }
+}
