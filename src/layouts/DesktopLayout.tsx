@@ -22,11 +22,13 @@ export function DesktopLayout() {
             <span className="gh-title text-[11px] text-garden-cyan">Flower Shelf</span>
             <Badge className="border-garden-moss text-garden-parch/70">{shelf.length}</Badge>
           </div>
-          <div className="gh-scroll -mr-1 min-h-0 flex-1 overflow-y-auto pr-1">
+          <div className="gh-scroll -mr-1 min-h-0 flex-1 overflow-y-auto pb-1 pr-1">
             {/* Desktop primarily drags; tap also selects so a pot can be tapped to place. */}
             <FlowerShelf onActivate={(f) => selectFlower(f.id)} gridClassName="grid-cols-2" />
           </div>
-          <p className="mt-2 text-center font-pixel text-[9px] uppercase tracking-wide text-garden-parch/40">
+          {/* shrink-0 + top divider: a crisp bottom boundary for the panel, so no partial
+              card row can bleed past the footer. */}
+          <p className="mt-2 shrink-0 border-t border-garden-moss/40 pt-2 text-center font-pixel text-[9px] uppercase tracking-wide text-garden-parch/40">
             drag a flower into a pot
           </p>
         </aside>
