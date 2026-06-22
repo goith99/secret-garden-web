@@ -3,6 +3,7 @@ import { AppHeader } from "../components/AppHeader";
 import { FlowerSections } from "../components/FlowerSections";
 import { Greenhouse } from "../components/Greenhouse";
 import { JournalPanel } from "../components/JournalPanel";
+import { Footer } from "../components/Footer";
 import { MobileTabBar } from "./MobileTabBar";
 
 /**
@@ -34,6 +35,7 @@ export function MobileLayout() {
         {activeTab === "journal" && <JournalPanel />}
       </main>
 
+      <Footer />
       <MobileTabBar />
     </div>
   );

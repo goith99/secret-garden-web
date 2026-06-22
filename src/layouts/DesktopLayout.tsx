@@ -3,6 +3,7 @@ import { AppHeader } from "../components/AppHeader";
 import { FlowerSections } from "../components/FlowerSections";
 import { Greenhouse } from "../components/Greenhouse";
 import { JournalPanel } from "../components/JournalPanel";
+import { Footer } from "../components/Footer";
 
 /**
  * Desktop: one screen, NO page scroll. Three columns — Flower list (left: a fixed Starter
@@ -37,6 +38,7 @@ export function DesktopLayout() {
           <JournalPanel />
         </aside>
       </main>
+      <Footer />
     </div>
   );
 }
