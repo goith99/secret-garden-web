@@ -40,6 +40,27 @@ import { useGardenActions, TxError } from "../program/transactions";
 const INSUFFICIENT_SOL_MSG =
   "Your garden needs a little more SOL to grow. Add funds and try again.";
 
+const BLOOM_REFRESH_TOAST = "Your bloom is safe — tap to refresh your garden";
+
+/** Build a mock offspring from two parents (standalone/demo mode — no chain). */
+function makeMockNewborn(a: Flower, b: Flower, idx: number): Flower {
+  return {
+    id: `mock-flower-${idx}`,
+    owner: a.owner,
+    flowerIndex: idx,
+    visualSpeciesId: 255,
+    generation: Math.max(a.generation, b.generation) + 1,
+    rarity: ((a.rarity + b.rarity) % 4) + 1,
+    stability: 50,
+    revealedTraitMask: 0,
+    genomeStatus: GenomeStatus.Encrypted,
+    status: FlowerStatus.Active,
+    parentA: a.id,
+    parentB: b.id,
+    createdAt: Math.floor(Date.now() / 1000),
+  };
+}
+
 /**
  * Real on-chain data injected by the connected app (Stage 6C). When omitted (e.g. tests),
  * the provider falls back to the Stage 6A mock data so it still works standalone.
@@ -61,6 +82,10 @@ interface GameContextValue {
   phaseLabel: string;
   bothPotsFilled: boolean;
   isCycling: boolean; // mid breeding cycle (Confirm..Growing) — button shows a spinner & disables
+  /** The freshly-bloomed offspring shown inside the Hybrid Pot at BloomReady (null otherwise). */
+  newBloom: Flower | null;
+  /** True when a competition round is currently Open (drives the bloom's submit button). */
+  roundOpen: boolean;
   /** Player-vocabulary breeding problem (e.g. low SOL) shown under the crossbreed CTA. */
   breedError: string | null;
   journal: JournalEntry[];
@@ -80,7 +105,10 @@ interface GameContextValue {
   clearPot: (pot: PotId) => void;
   setEnvironment: (kind: EnvironmentKind, optionIndex: number) => void;
   startCrossbreed: () => void;
+  /** "SAVE TO COLLECTION" — keep the new bloom without entering it, then refresh the garden. */
   collectBloom: () => void;
+  /** "SUBMIT TO CHALLENGE" — enter the new bloom in the open round, then save + refresh. */
+  submitBloom: () => void;
   resetAfterFailure: () => void;
   /** Whether a flower may be entered into the active round right now (GO enabled). */
   canSubmit: (flower: Flower) => boolean;
@@ -131,12 +159,14 @@ export function GameProvider({
   const [breedError, setBreedError] = useState<string | null>(null);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [bloomToast, setBloomToast] = useState<string | null>(null);
+  const [newBloom, setNewBloom] = useState<Flower | null>(null);
   const [journal, setJournal] = useState<JournalEntry[]>(initial?.journal ?? MOCK_JOURNAL);
   const [activeTab, setActiveTab] = useState<MobileTab>("garden");
 
   // Real on-chain challenge/winners (read-only in 6C); fall back to mocks when standalone.
   const challenge = initial?.challenge ?? MOCK_CHALLENGE;
   const winners = initial?.winners ?? MOCK_WINNERS;
+  const roundOpen = challenge.roundId > 0 && challenge.status === RoundStatus.Open;
 
   // Adopt freshly-refetched chain data: useGardenData hands us new array identities only when
   // a reload actually produced new flowers/journal, so this re-syncs the shelf after a
@@ -222,13 +252,21 @@ export function GameProvider({
     if (!bothPotsFilled || activePhase || !potA || !potB) return;
     clearTimers();
     setBreedError(null);
+    setNewBloom(null);
 
     if (!onRefetch) {
-      // Standalone demo: keep the original mocked cycle so the UI still animates.
+      // Standalone demo: keep the original mocked cycle so the UI still animates. The mock
+      // offspring is built up front so it can be shown inside the pot at BloomReady.
+      const newborn = makeMockNewborn(potA, potB, nextIndex.current++);
       setActivePhase("Confirm");
       timers.current.push(window.setTimeout(() => setActivePhase("Waiting"), 1100));
       timers.current.push(window.setTimeout(() => setActivePhase("Growing"), 2500));
-      timers.current.push(window.setTimeout(() => setActivePhase("BloomReady"), 4300));
+      timers.current.push(
+        window.setTimeout(() => {
+          setNewBloom(newborn);
+          setActivePhase("BloomReady");
+        }, 4300),
+      );
       return;
     }
 
@@ -237,7 +275,7 @@ export function GameProvider({
     setActivePhase("Confirm");
     void (async () => {
       try {
-        const { experiment } = await actions.startBreeding({
+        const { experiment, offspringIndex } = await actions.startBreeding({
           flowerAIndex: parentA.flowerIndex,
           flowerBIndex: parentB.flowerIndex,
           environment,
@@ -246,7 +284,16 @@ export function GameProvider({
         setActivePhase("Waiting"); // tx confirmed; the MPC is now running
         const outcome = await actions.pollBreeding(experiment);
         if (!mounted.current) return;
-        setActivePhase(outcome === "completed" ? "BloomReady" : "Failed");
+        if (outcome === "completed") {
+          // Read the offspring so it can be shown inside the pot. A read miss is non-fatal —
+          // the pot falls back to a generic bloom and the flower still appears after refresh.
+          const bloom = await actions.fetchFlower(offspringIndex).catch(() => null);
+          if (!mounted.current) return;
+          setNewBloom(bloom);
+          setActivePhase("BloomReady");
+        } else {
+          setActivePhase("Failed");
+        }
       } catch (e) {
         if (!mounted.current) return;
         if (e instanceof TxError && e.kind === "rejected") {
@@ -261,72 +308,94 @@ export function GameProvider({
     })();
   }, [bothPotsFilled, activePhase, potA, potB, environment, actions, onRefetch, clearTimers]);
 
-  const collectBloom = useCallback(() => {
-    if (activePhase !== "BloomReady" || !potA || !potB) return;
-    // Real mode: the hybrid is already on-chain. Reset to idle immediately so the player can
-    // keep playing, then refetch to reveal it. A refetch failure NEVER tears down the game
-    // (see App's error gate) — retry quietly up to 3x, then show a small inline toast.
-    if (onRefetch) {
-      setPotA(null);
-      setPotB(null);
-      setActivePhase(null);
-      setBreedError(null);
-      setBloomToast(null);
-      void (async () => {
-        for (let attempt = 0; attempt < 4; attempt++) {
-          let ok = false;
-          try {
-            ok = await onRefetch();
-          } catch {
-            /* keep ok = false and retry */
-          }
-          if (!mounted.current) return;
-          if (ok) return; // bloom is now on the shelf
-          if (attempt < 3) await new Promise((r) => setTimeout(r, 2000));
-        }
-        if (mounted.current) {
-          setBloomToast("Your bloom is safe — tap to refresh your garden");
-        }
-      })();
-      return;
-    }
-    const generation = Math.max(potA.generation, potB.generation) + 1;
-    const idx = nextIndex.current++;
-    const rarity = ((potA.rarity + potB.rarity) % 4) + 1;
-    const createdAt = Math.floor(Date.now() / 1000);
-    const newborn: Flower = {
-      id: `mock-flower-${idx}`,
-      owner: potA.owner,
-      flowerIndex: idx,
-      visualSpeciesId: 255,
-      generation,
-      rarity,
-      stability: 50,
-      revealedTraitMask: 0,
-      genomeStatus: GenomeStatus.Encrypted,
-      status: FlowerStatus.Active,
-      parentA: potA.id,
-      parentB: potB.id,
-      createdAt,
-    };
-    const entry: JournalEntry = {
-      id: `exp-${idx}`,
-      createdAt,
-      parentASpecies: potA.visualSpeciesId,
-      parentBSpecies: potB.visualSpeciesId,
-      status: ExperimentStatus.Completed,
-      result: { species: 255, generation, rarity },
-    };
-    setShelf((s) => [newborn, ...s]);
-    setJournal((j) => [entry, ...j]);
+  // Real mode: the hybrid is already on-chain. Reset to idle immediately so the player can
+  // keep playing, then refetch to reveal it. A refetch failure NEVER tears down the game
+  // (see App's error gate) — retry quietly up to 3x, then show a small inline toast.
+  const resetAndRefetch = useCallback(() => {
+    if (!onRefetch) return;
     setPotA(null);
     setPotB(null);
     setActivePhase(null);
-  }, [activePhase, potA, potB, onRefetch]);
+    setNewBloom(null);
+    setBreedError(null);
+    setBloomToast(null);
+    void (async () => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        let ok = false;
+        try {
+          ok = await onRefetch();
+        } catch {
+          /* keep ok = false and retry */
+        }
+        if (!mounted.current) return;
+        if (ok) return; // bloom is now on the shelf
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 2000));
+      }
+      if (mounted.current) setBloomToast(BLOOM_REFRESH_TOAST);
+    })();
+  }, [onRefetch]);
+
+  // Standalone/demo collect: move the mock bloom onto the shelf (+ journal entry). When
+  // `submitted` is set it lands already entered in the challenge.
+  const mockCollect = useCallback(
+    (submitted: boolean) => {
+      if (!newBloom || !potA || !potB) return;
+      const bloom = submitted ? { ...newBloom, status: FlowerStatus.Submitted } : newBloom;
+      const entry: JournalEntry = {
+        id: `exp-${bloom.flowerIndex}`,
+        createdAt: bloom.createdAt,
+        parentASpecies: potA.visualSpeciesId,
+        parentBSpecies: potB.visualSpeciesId,
+        status: ExperimentStatus.Completed,
+        result: {
+          species: bloom.visualSpeciesId,
+          generation: bloom.generation,
+          rarity: bloom.rarity,
+        },
+      };
+      setShelf((s) => [bloom, ...s]);
+      setJournal((j) => [entry, ...j]);
+      setPotA(null);
+      setPotB(null);
+      setActivePhase(null);
+      setNewBloom(null);
+    },
+    [newBloom, potA, potB],
+  );
+
+  // "SAVE TO COLLECTION" — keep the bloom without entering it.
+  const collectBloom = useCallback(() => {
+    if (activePhase !== "BloomReady") return;
+    if (onRefetch) resetAndRefetch();
+    else mockCollect(false);
+  }, [activePhase, onRefetch, resetAndRefetch, mockCollect]);
+
+  // "SUBMIT TO CHALLENGE" — enter the bloom in the open round, then save + refresh.
+  const submitBloom = useCallback(() => {
+    if (activePhase !== "BloomReady" || !newBloom) return;
+    if (!onRefetch) {
+      mockCollect(true);
+      return;
+    }
+    const bloom = newBloom;
+    setSubmittingId(bloom.id);
+    void (async () => {
+      try {
+        await actions.submitEntry({ roundId: challenge.roundId, flowerRecord: bloom.id });
+        if (!mounted.current) return;
+        resetAndRefetch(); // entered on-chain; now save + refresh as usual
+      } catch {
+        // Wallet declined or tx failed: stay at BloomReady so the player can retry or save.
+      } finally {
+        if (mounted.current) setSubmittingId(null);
+      }
+    })();
+  }, [activePhase, newBloom, onRefetch, actions, challenge.roundId, resetAndRefetch, mockCollect]);
 
   const resetAfterFailure = useCallback(() => {
     clearTimers();
     setActivePhase(null);
+    setNewBloom(null);
     setBreedError(null);
   }, [clearTimers]);
 
@@ -396,6 +465,8 @@ export function GameProvider({
       phaseLabel: BreedPhase[phase],
       bothPotsFilled,
       isCycling,
+      newBloom,
+      roundOpen,
       breedError,
       journal,
       challenge,
@@ -411,6 +482,7 @@ export function GameProvider({
       setEnvironment,
       startCrossbreed,
       collectBloom,
+      submitBloom,
       resetAfterFailure,
       canSubmit,
       submitFlower,
@@ -419,9 +491,10 @@ export function GameProvider({
     }),
     [
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
-      breedError, journal, challenge, winners, activeTab, submittingId, bloomToast, selectFlower,
-      placeInPot, autoPlace, clearPot, setEnvironment, startCrossbreed, collectBloom,
-      resetAfterFailure, canSubmit, submitFlower, retryRefresh, simulateFailure,
+      newBloom, roundOpen, breedError, journal, challenge, winners, activeTab, submittingId,
+      bloomToast, selectFlower, placeInPot, autoPlace, clearPot, setEnvironment, startCrossbreed,
+      collectBloom, submitBloom, resetAfterFailure, canSubmit, submitFlower, retryRefresh,
+      simulateFailure,
     ],
   );
 

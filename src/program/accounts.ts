@@ -195,6 +195,17 @@ export async function fetchFlowerRecords(
   return out;
 }
 
+/** Read a single FlowerRecord by owner + index (e.g. a freshly-bred offspring). */
+export async function fetchFlower(
+  program: SecretGardenProgram,
+  owner: PublicKey,
+  index: number,
+): Promise<Flower | null> {
+  const pda = flowerPda(owner, index);
+  const acc = await program.account.flowerRecord.fetchNullable(pda);
+  return acc ? mapFlower(pda, acc) : null;
+}
+
 export async function fetchActiveRound(
   program: SecretGardenProgram,
   currentRound: number,
