@@ -25,7 +25,10 @@ function ConnectedApp() {
 
   // First load (no data yet) shows the tending state; a background refresh keeps the game up.
   if (loading && !playerProfile) return <GardenLoading />;
-  if (error) return <GardenError message={error} onRetry={refetch} />;
+  // The full-screen "out of reach" state is ONLY for an initial load failure (no garden yet).
+  // A failed background refetch after a transaction keeps the game on screen and is retried
+  // quietly (see GameContext bloom toast) — it must never blow away the player's session.
+  if (error && !playerProfile) return <GardenError message={error} onRetry={refetch} />;
   if (!playerProfile) return <GardenEmpty onRefresh={refetch} />;
 
   return (
