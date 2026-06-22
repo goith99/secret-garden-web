@@ -1,29 +1,50 @@
 import { AppWalletProvider } from "./wallet/WalletProvider";
 import { useGardener } from "./wallet/useGardener";
 import { GameProvider } from "./game/GameContext";
+import { useGardenData, NO_ACTIVE_ROUND } from "./hooks/useGardenData";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { DesktopLayout } from "./layouts/DesktopLayout";
 import { MobileLayout } from "./layouts/MobileLayout";
 import { DisconnectedScreen } from "./screens/DisconnectedScreen";
+import { GardenEmpty, GardenError, GardenLoading } from "./screens/GardenStates";
 
 /**
- * Root. Stage 6B: a real wallet connection gates the game. <AppWalletProvider> owns all
- * blockchain wiring; the gate shows the connect screen until a wallet is connected, then
- * the existing mock-data game (responsive layout + <GameProvider>) renders unchanged.
- * Stage 6C swaps the mock data SOURCE for on-chain reads behind the same gate.
+ * Root. Stage 6C: behind the Stage 6B wallet gate, real on-chain devnet data drives the
+ * game. The connected app reads the player's garden (config, profile, flowers, round) and
+ * feeds the mapped UI data into <GameProvider>; the existing layouts/components are
+ * unchanged — they consume it through useGame(). Transactions are still mocked (Stage 6D).
  */
-function Game() {
-  // Below 1024px we render the dedicated mobile tabbed layout; the three-column desktop
-  // needs ≥lg width to fit one screen without scroll.
+function GameView() {
   const isMobile = useMediaQuery("(max-width: 1023px)");
+  return isMobile ? <MobileLayout /> : <DesktopLayout />;
+}
+
+function ConnectedApp() {
+  const { flowers, journal, activeRound, playerProfile, loading, error, refetch } =
+    useGardenData();
+
+  // First load (no data yet) shows the tending state; a background refresh keeps the game up.
+  if (loading && !playerProfile) return <GardenLoading />;
+  if (error) return <GardenError message={error} onRetry={refetch} />;
+  if (!playerProfile) return <GardenEmpty onRefresh={refetch} />;
+
   return (
-    <GameProvider>{isMobile ? <MobileLayout /> : <DesktopLayout />}</GameProvider>
+    <GameProvider
+      initial={{
+        flowers,
+        journal,
+        challenge: activeRound ?? NO_ACTIVE_ROUND,
+        winners: [], // revealed winners arrive with scoring (not yet on devnet) — see notes
+      }}
+    >
+      <GameView />
+    </GameProvider>
   );
 }
 
 function Gate() {
   const { connected } = useGardener();
-  return connected ? <Game /> : <DisconnectedScreen />;
+  return connected ? <ConnectedApp /> : <DisconnectedScreen />;
 }
 
 export default function App() {

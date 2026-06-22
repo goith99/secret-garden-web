@@ -1,6 +1,11 @@
 import type { ReactElement } from "react";
 import type { Flower } from "../types";
 import { speciesOf, rarity as rarityStyle, type SpeciesSkin } from "../mocks/presentation";
+import {
+  decodeTraitMask,
+  paletteFor,
+  type HybridPalette,
+} from "../visuals/hybridTraits";
 
 /**
  * PLACEHOLDER SPRITES. Pure-SVG flowers standing in for future pixel-art assets.
@@ -193,6 +198,140 @@ const SPECIES_SHAPE: Record<number, (p: ShapeProps) => ReactElement> = {
   255: HybridShape,
 };
 
+/* ===========================================================================
+ * Stage 3C: PARAMETRIC HYBRID. A hybrid (visualSpeciesId === 255) is drawn by
+ * composing one of 5 stem + 5 leaf + 5 petal variants, each selected by a 0..4
+ * class decoded from the on-chain revealed_trait_mask, coloured by a palette
+ * picked by the color class. The four classes are independent, so the same
+ * hybrid always renders the same flower (deterministic from chain data).
+ * ========================================================================= */
+
+// --- 5 stem variants (coloured by palette.leaf) ---
+const STEMS: Array<(p: { color: string }) => ReactElement> = [
+  ({ color }) => <rect x="30.5" y="30" width="3" height="26" rx="1.5" fill={color} />,
+  ({ color }) => (
+    <path d="M32,30 C 26,40 28,50 30,56" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" />
+  ),
+  ({ color }) => (
+    <path d="M32,30 C 38,40 36,50 34,56" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" />
+  ),
+  ({ color }) => <rect x="29.5" y="30" width="5" height="26" rx="2.5" fill={color} />,
+  ({ color }) => (
+    <>
+      <rect x="31" y="42" width="2.5" height="14" rx="1.25" fill={color} />
+      <path d="M32,43 C 28,38 27,34 28,31" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M32,43 C 36,38 37,34 36,31" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" />
+    </>
+  ),
+];
+
+// --- 5 leaf variants (coloured by palette.leaf) ---
+const LEAF: Array<(p: { color: string }) => ReactElement> = [
+  ({ color }) => (
+    <>
+      <ellipse cx="24" cy="48" rx="5" ry="2.2" fill={color} transform="rotate(-25 24 48)" />
+      <ellipse cx="40" cy="48" rx="5" ry="2.2" fill={color} transform="rotate(25 40 48)" />
+    </>
+  ),
+  ({ color }) => (
+    <>
+      <ellipse cx="25" cy="42" rx="6" ry="2.6" fill={color} transform="rotate(-22 25 42)" />
+      <ellipse cx="39" cy="42" rx="6" ry="2.6" fill={color} transform="rotate(22 39 42)" />
+    </>
+  ),
+  ({ color }) => (
+    <>
+      <ellipse cx="39" cy="36" rx="6" ry="2.6" fill={color} transform="rotate(28 39 36)" />
+      <ellipse cx="25" cy="50" rx="5" ry="2.2" fill={color} transform="rotate(-26 25 50)" />
+    </>
+  ),
+  ({ color }) => (
+    <>
+      <ellipse cx="23" cy="46" rx="7.5" ry="3.4" fill={color} transform="rotate(-20 23 46)" />
+      <ellipse cx="41" cy="46" rx="7.5" ry="3.4" fill={color} transform="rotate(20 41 46)" />
+    </>
+  ),
+  ({ color }) => (
+    <>
+      <ellipse cx="24" cy="50" rx="4.5" ry="2" fill={color} transform="rotate(-28 24 50)" />
+      <ellipse cx="40" cy="50" rx="4.5" ry="2" fill={color} transform="rotate(28 40 50)" />
+      <ellipse cx="40" cy="40" rx="4.5" ry="2" fill={color} transform="rotate(30 40 40)" />
+    </>
+  ),
+];
+
+interface PetalProps {
+  palette: HybridPalette;
+  accent: string;
+  gradId: string;
+}
+
+// --- 5 petal-cluster variants (drawn around the bloom centre at translate(32 26)) ---
+const PETALS: Array<(p: PetalProps) => ReactElement> = [
+  // 0 — round radial cluster (8 rounded petals)
+  ({ palette, accent }) => (
+    <g transform="translate(32 26)">
+      {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
+        <circle key={a} cx="0" cy="-9" r="5.5" fill={palette.petal} stroke={EDGE} strokeWidth="0.6" transform={`rotate(${a})`} />
+      ))}
+      <circle r="7.5" fill={palette.center} stroke={EDGE} strokeWidth="0.6" />
+      <circle r="3" fill={accent} />
+    </g>
+  ),
+  // 1 — pointed star (6 lily-like petals)
+  ({ palette, accent }) => (
+    <g transform="translate(32 26)">
+      {[0, 60, 120, 180, 240, 300].map((a) => (
+        <path key={a} d={LILY_PETAL} fill={palette.petal} stroke={EDGE} strokeWidth="0.6" transform={`rotate(${a})`} />
+      ))}
+      <circle r="3.4" fill={palette.center} />
+      <circle r="1.6" fill={accent} />
+    </g>
+  ),
+  // 2 — broad two-tone ellipses (6, gradient blend)
+  ({ palette, accent, gradId }) => (
+    <g transform="translate(32 26)">
+      {[0, 60, 120, 180, 240, 300].map((a, i) => (
+        <ellipse
+          key={a}
+          rx="8"
+          ry="13"
+          cx="0"
+          cy="-11"
+          fill={`url(#${gradId})`}
+          stroke={EDGE}
+          strokeWidth="0.6"
+          transform={`rotate(${a}) ${i % 2 === 1 ? "scale(0.92)" : ""}`}
+        />
+      ))}
+      <circle r="6.5" fill={palette.center} stroke={EDGE} strokeWidth="0.6" />
+      <circle r="2.4" fill={accent} />
+    </g>
+  ),
+  // 3 — layered rose lobes (5 outer + 5 inner)
+  ({ palette, accent }) => (
+    <g transform="translate(32 26)">
+      {[0, 72, 144, 216, 288].map((a) => (
+        <path key={`o${a}`} d={ROSE_LOBE} fill={palette.petal} stroke={EDGE} strokeWidth="0.6" transform={`rotate(${a})`} />
+      ))}
+      {[36, 108, 180, 252, 324].map((a) => (
+        <path key={`i${a}`} d={ROSE_LOBE} fill={palette.center} stroke={EDGE} strokeWidth="0.5" transform={`rotate(${a}) scale(0.6)`} />
+      ))}
+      <circle r="1.8" fill={accent} />
+    </g>
+  ),
+  // 4 — spiky (12 thin triangular petals)
+  ({ palette, accent }) => (
+    <g transform="translate(32 26)">
+      {Array.from({ length: 12 }, (_, i) => i * 30).map((a) => (
+        <path key={a} d="M0,-6 L1.8,-15 L-1.8,-15 Z" fill={palette.petal} stroke={EDGE} strokeWidth="0.4" transform={`rotate(${a})`} />
+      ))}
+      <circle r="5" fill={palette.center} stroke={EDGE} strokeWidth="0.6" />
+      <circle r="2" fill={accent} />
+    </g>
+  ),
+];
+
 export function FlowerSprite({
   flower,
   size = "md",
@@ -202,27 +341,56 @@ export function FlowerSprite({
   size?: SpriteSize;
   sway?: boolean;
 }) {
-  const skin = speciesOf(flower.visualSpeciesId);
-  const isHybrid = !!skin.hybrid;
   const px = PX[size];
   const gradId = `pet-${flower.id}`;
   const accent = rarityStyle(flower.rarity).dot;
+  const isHybrid = flower.visualSpeciesId === 255;
 
+  // Hybrid: compose stem/leaf/petals from the on-chain mask classes (Stage 3C).
+  if (isHybrid) {
+    const classes = decodeTraitMask(flower.revealedTraitMask);
+    const palette = paletteFor(classes.color);
+    const Stem = STEMS[classes.stem];
+    const Leaf = LEAF[classes.leaf];
+    const Petals = PETALS[classes.petal];
+    return (
+      <svg
+        width={px}
+        height={px}
+        viewBox="0 0 64 64"
+        role="img"
+        aria-label={`Hybrid flower (${palette.name})`}
+        className={sway ? "animate-sway origin-bottom" : "origin-bottom"}
+      >
+        <defs>
+          <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor={palette.petal} />
+            <stop offset="100%" stopColor={palette.center} />
+          </linearGradient>
+        </defs>
+        <Stem color={palette.leaf} />
+        <Leaf color={palette.leaf} />
+        <Petals palette={palette} accent={accent} gradId={gradId} />
+      </svg>
+    );
+  }
+
+  // Starter: fixed per-species silhouette (unchanged from Stage 6A).
+  const skin = speciesOf(flower.visualSpeciesId);
   const Shape = SPECIES_SHAPE[flower.visualSpeciesId] ?? HybridShape;
-
   return (
     <svg
       width={px}
       height={px}
       viewBox="0 0 64 64"
       role="img"
-      aria-label={isHybrid ? "Hybrid flower" : skin.name}
+      aria-label={skin.name}
       className={sway ? "animate-sway origin-bottom" : "origin-bottom"}
     >
       <defs>
         <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stopColor={skin.petal} />
-          <stop offset="100%" stopColor={isHybrid ? skin.center : skin.petal} />
+          <stop offset="100%" stopColor={skin.petal} />
         </linearGradient>
       </defs>
       <Shape skin={skin} accent={accent} gradId={gradId} />
