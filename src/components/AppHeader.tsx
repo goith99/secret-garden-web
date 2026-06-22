@@ -9,9 +9,17 @@ export function AppHeader({ compact = false }: { compact?: boolean }) {
   return (
     <header className="flex shrink-0 items-center justify-between gap-2 border-b border-garden-moss/60 px-3 py-2">
       <div className="flex items-center gap-2">
-        <span className="text-xl" aria-hidden>
-          🌿
-        </span>
+        {/* 5-petal flower mark — matches public/favicon.svg */}
+        <svg className="h-5 w-5" viewBox="0 0 32 32" fill="none" aria-hidden>
+          <g transform="translate(16 16)">
+            <ellipse cx="0" cy="-8" rx="4.5" ry="8" fill="#D4A017" transform="rotate(0)" />
+            <ellipse cx="0" cy="-8" rx="4.5" ry="8" fill="#D4A017" transform="rotate(72)" />
+            <ellipse cx="0" cy="-8" rx="4.5" ry="8" fill="#D4A017" transform="rotate(144)" />
+            <ellipse cx="0" cy="-8" rx="4.5" ry="8" fill="#D4A017" transform="rotate(216)" />
+            <ellipse cx="0" cy="-8" rx="4.5" ry="8" fill="#D4A017" transform="rotate(288)" />
+            <circle r="4.5" fill="#8B6914" />
+          </g>
+        </svg>
         <div className="leading-tight">
           <h1 className="font-pixel text-sm uppercase tracking-[0.2em] text-garden-mint">Secret Garden</h1>
           {!compact && (
