@@ -44,34 +44,33 @@ export default {
           "0%,100%": { opacity: "1" },
           "50%": { opacity: "0.55" },
         },
-        // Greenhouse dust/pollen motes drifting slowly upward with a gentle sideways wander.
-        // Three subtly different paths so the few particles never march in lockstep.
-        driftA: {
-          "0%": { transform: "translate(0, 0)", opacity: "0" },
-          "15%": { opacity: "0.45" },
-          "85%": { opacity: "0.35" },
-          "100%": { transform: "translate(10px, -150px)", opacity: "0" },
+        // Night-garden sky: stars softly twinkling via opacity.
+        twinkle: {
+          "0%,100%": { opacity: "0.25" },
+          "50%": { opacity: "1" },
         },
-        driftB: {
-          "0%": { transform: "translate(0, 0)", opacity: "0" },
-          "20%": { opacity: "0.4" },
-          "80%": { opacity: "0.28" },
-          "100%": { transform: "translate(-16px, -180px)", opacity: "0" },
+        // Fireflies drifting on a slow, wandering loop while their glow pulses. Two subtly
+        // different paths so the handful of bugs never move in unison.
+        firefly: {
+          "0%,100%": { transform: "translate(0, 0)", opacity: "0.2" },
+          "25%": { transform: "translate(12px, -14px)", opacity: "0.9" },
+          "50%": { transform: "translate(-6px, -22px)", opacity: "0.5" },
+          "75%": { transform: "translate(-14px, -8px)", opacity: "0.85" },
         },
-        driftC: {
-          "0%": { transform: "translate(0, 0)", opacity: "0" },
-          "15%": { opacity: "0.5" },
-          "85%": { opacity: "0.32" },
-          "100%": { transform: "translate(7px, -130px)", opacity: "0" },
+        fireflyB: {
+          "0%,100%": { transform: "translate(0, 0)", opacity: "0.25" },
+          "30%": { transform: "translate(-12px, -16px)", opacity: "0.8" },
+          "60%": { transform: "translate(9px, -24px)", opacity: "0.45" },
+          "85%": { transform: "translate(13px, -7px)", opacity: "0.9" },
         },
       },
       animation: {
         sway: "sway 3.5s ease-in-out infinite",
         rise: "rise 0.35s ease-out",
         pulseSoft: "pulseSoft 1.4s ease-in-out infinite",
-        driftA: "driftA 12s linear infinite",
-        driftB: "driftB 15s linear infinite",
-        driftC: "driftC 9.5s linear infinite",
+        twinkle: "twinkle 3s ease-in-out infinite",
+        firefly: "firefly 9s ease-in-out infinite",
+        fireflyB: "fireflyB 11s ease-in-out infinite",
       },
     },
   },
