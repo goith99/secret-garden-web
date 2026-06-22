@@ -69,6 +69,8 @@ interface GameContextValue {
   activeTab: MobileTab;
   /** Flower currently being submitted to the round (GO button) — spinner/disable, or null. */
   submittingId: string | null;
+  /** Inline toast shown when the post-bloom refetch keeps failing (chain has the bloom). */
+  bloomToast: string | null;
 
   setActiveTab: (t: MobileTab) => void;
   selectFlower: (id: string) => void;
@@ -84,6 +86,8 @@ interface GameContextValue {
   canSubmit: (flower: Flower) => boolean;
   /** Submit a flower to the active round (GO). Optimistic, then refetch confirms. */
   submitFlower: (flower: Flower) => void;
+  /** Retry the garden refresh from the bloom toast; clears the toast on success. */
+  retryRefresh: () => void;
   /** DEV-only demo: jump to the "Bloom Failed" state to exercise that label. */
   simulateFailure: () => void;
 }
@@ -101,10 +105,23 @@ export function GameProvider({
 }: {
   children: ReactNode;
   initial?: GardenInitial;
-  /** Reload real on-chain data (Stage 6D). When provided, breeding/submit use the real path. */
-  onRefetch?: () => void;
+  /**
+   * Reload real on-chain data (Stage 6D). When provided, breeding/submit use the real path.
+   * Resolves true on success / false on a failed fetch, so the post-bloom refresh can retry
+   * quietly instead of surfacing the full-screen error.
+   */
+  onRefetch?: () => Promise<boolean>;
 }) {
   const actions = useGardenActions();
+  // Guards setState in the async breeding/refetch flows from running after unmount (avoids
+  // an unhandled-rejection / "set state on unmounted" race when polling + refetch overlap).
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [shelf, setShelf] = useState<Flower[]>(initial?.flowers ?? MOCK_FLOWERS);
   const [potA, setPotA] = useState<Flower | null>(null);
   const [potB, setPotB] = useState<Flower | null>(null);
@@ -113,6 +130,7 @@ export function GameProvider({
   const [activePhase, setActivePhase] = useState<ActivePhase | null>(null); // null = at rest
   const [breedError, setBreedError] = useState<string | null>(null);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [bloomToast, setBloomToast] = useState<string | null>(null);
   const [journal, setJournal] = useState<JournalEntry[]>(initial?.journal ?? MOCK_JOURNAL);
   const [activeTab, setActiveTab] = useState<MobileTab>("garden");
 
@@ -224,10 +242,13 @@ export function GameProvider({
           flowerBIndex: parentB.flowerIndex,
           environment,
         });
+        if (!mounted.current) return;
         setActivePhase("Waiting"); // tx confirmed; the MPC is now running
         const outcome = await actions.pollBreeding(experiment);
+        if (!mounted.current) return;
         setActivePhase(outcome === "completed" ? "BloomReady" : "Failed");
       } catch (e) {
+        if (!mounted.current) return;
         if (e instanceof TxError && e.kind === "rejected") {
           setActivePhase(null); // wallet declined — silently return to Ready
         } else {
@@ -242,13 +263,31 @@ export function GameProvider({
 
   const collectBloom = useCallback(() => {
     if (activePhase !== "BloomReady" || !potA || !potB) return;
-    // Real mode: the hybrid is already on-chain — refetch to load it, then reset the pots.
+    // Real mode: the hybrid is already on-chain. Reset to idle immediately so the player can
+    // keep playing, then refetch to reveal it. A refetch failure NEVER tears down the game
+    // (see App's error gate) — retry quietly up to 3x, then show a small inline toast.
     if (onRefetch) {
-      onRefetch();
       setPotA(null);
       setPotB(null);
       setActivePhase(null);
       setBreedError(null);
+      setBloomToast(null);
+      void (async () => {
+        for (let attempt = 0; attempt < 4; attempt++) {
+          let ok = false;
+          try {
+            ok = await onRefetch();
+          } catch {
+            /* keep ok = false and retry */
+          }
+          if (!mounted.current) return;
+          if (ok) return; // bloom is now on the shelf
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 2000));
+        }
+        if (mounted.current) {
+          setBloomToast("Your bloom is safe — tap to refresh your garden");
+        }
+      })();
       return;
     }
     const generation = Math.max(potA.generation, potB.generation) + 1;
@@ -320,17 +359,31 @@ export function GameProvider({
               f.id === flower.id ? { ...f, status: FlowerStatus.Submitted } : f,
             ),
           );
-          onRefetch();
+          void onRefetch();
         } catch {
           // Wallet declined or tx failed: leave the flower Active (no error surfaced here —
           // the GO button simply stays available for another try).
         } finally {
-          setSubmittingId(null);
+          if (mounted.current) setSubmittingId(null);
         }
       })();
     },
     [onRefetch, canSubmit, actions, challenge.roundId],
   );
+
+  // Bloom toast tap: try the refresh again; clear the toast once the garden reloads.
+  const retryRefresh = useCallback(() => {
+    if (!onRefetch) return;
+    void (async () => {
+      let ok = false;
+      try {
+        ok = await onRefetch();
+      } catch {
+        /* leave ok = false; toast stays until a successful refresh */
+      }
+      if (mounted.current && ok) setBloomToast(null);
+    })();
+  }, [onRefetch]);
 
   const value = useMemo<GameContextValue>(
     () => ({
@@ -349,6 +402,7 @@ export function GameProvider({
       winners,
       activeTab,
       submittingId,
+      bloomToast,
       setActiveTab,
       selectFlower,
       placeInPot,
@@ -360,13 +414,14 @@ export function GameProvider({
       resetAfterFailure,
       canSubmit,
       submitFlower,
+      retryRefresh,
       simulateFailure,
     }),
     [
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
-      breedError, journal, challenge, winners, activeTab, submittingId, selectFlower, placeInPot,
-      autoPlace, clearPot, setEnvironment, startCrossbreed, collectBloom, resetAfterFailure,
-      canSubmit, submitFlower, simulateFailure,
+      breedError, journal, challenge, winners, activeTab, submittingId, bloomToast, selectFlower,
+      placeInPot, autoPlace, clearPot, setEnvironment, startCrossbreed, collectBloom,
+      resetAfterFailure, canSubmit, submitFlower, retryRefresh, simulateFailure,
     ],
   );
 

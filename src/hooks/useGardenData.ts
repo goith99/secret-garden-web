@@ -36,7 +36,8 @@ export interface GardenData {
   journal: JournalEntry[];
   loading: boolean;
   error: string | null;
-  refetch: () => void;
+  /** Reload on-chain data. Resolves true on success, false if the fetch failed. */
+  refetch: () => Promise<boolean>;
 }
 
 /** Neutral challenge used when no round is currently open, so the greenhouse still renders. */
@@ -95,16 +96,16 @@ export function useGardenData(): GardenData {
   // Monotonic request id guards against a slow fetch resolving after the wallet changed.
   const reqId = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<boolean> => {
     // No wallet/program yet: leave the initial loading state in place (no sync setState in
     // the effect — see the post-await setStates below).
-    if (!program || !address) return;
+    if (!program || !address) return false;
     const my = ++reqId.current;
     try {
       const owner = new PublicKey(address);
       const gameConfig = await fetchGameConfig(program);
       const playerProfile = await fetchPlayerProfile(program, owner);
-      if (my !== reqId.current) return; // a newer load started
+      if (my !== reqId.current) return false; // a newer load started
 
       if (!playerProfile) {
         // New player — not an error.
@@ -117,7 +118,7 @@ export function useGardenData(): GardenData {
           loading: false,
           error: null,
         });
-        return;
+        return true;
       }
 
       const flowers = await fetchFlowerRecords(
@@ -128,7 +129,7 @@ export function useGardenData(): GardenData {
       const activeRound = gameConfig
         ? await fetchActiveRound(program, gameConfig.currentRound)
         : null;
-      if (my !== reqId.current) return;
+      if (my !== reqId.current) return false;
 
       setState({
         gameConfig,
@@ -139,14 +140,20 @@ export function useGardenData(): GardenData {
         loading: false,
         error: null,
       });
+      return true;
     } catch (e) {
-      if (my !== reqId.current) return;
+      if (my !== reqId.current) return false;
       console.error("[garden] data load failed:", e);
+      // NOTE: `error` here only drives the full-screen "out of reach" state on the INITIAL
+      // load (App gates it on a missing playerProfile). A failed BACKGROUND refetch (after a
+      // transaction) keeps the last-known garden on screen; callers use the returned `false`
+      // to retry quietly instead. Existing data is preserved below.
       setState((s) => ({
         ...s,
         loading: false,
         error: "We couldn't reach your garden. Check your connection and try again.",
       }));
+      return false;
     }
   }, [program, address]);
 
