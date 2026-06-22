@@ -85,6 +85,18 @@ export function roundPda(roundId: number): PublicKey {
     PROGRAM_ID,
   )[0];
 }
+export function experimentPda(owner: PublicKey, index: number): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [te.encode("experiment"), owner.toBytes(), u32le(index)],
+    PROGRAM_ID,
+  )[0];
+}
+export function entryPda(round: PublicKey, player: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [te.encode("entry"), round.toBytes(), player.toBytes()],
+    PROGRAM_ID,
+  )[0];
+}
 
 // ---- mappers --------------------------------------------------------------------------
 function mapConfig(c: RawConfig): GardenConfig {

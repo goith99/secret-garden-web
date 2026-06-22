@@ -36,6 +36,7 @@ function ConnectedApp() {
         challenge: activeRound ?? NO_ACTIVE_ROUND,
         winners: [], // revealed winners arrive with scoring (not yet on devnet) — see notes
       }}
+      onRefetch={refetch}
     >
       <GameView />
     </GameProvider>
