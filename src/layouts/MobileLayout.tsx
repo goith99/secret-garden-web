@@ -1,6 +1,6 @@
 import { useGame } from "../game/GameContext";
 import { AppHeader } from "../components/AppHeader";
-import { FlowerSections } from "../components/FlowerSections";
+import { HybridCollection } from "../components/HybridCollection";
 import { Greenhouse } from "../components/Greenhouse";
 import { JournalPanel } from "../components/JournalPanel";
 import { Footer } from "../components/Footer";
@@ -20,7 +20,7 @@ export function MobileLayout() {
 
       <main className="gh-scroll min-h-0 flex-1 overflow-y-auto p-3">
         {activeTab === "flowers" && (
-          <FlowerSections
+          <HybridCollection
             variant="mobile"
             onActivate={(f) => {
               // auto-place into the first empty pot, then reveal the Garden

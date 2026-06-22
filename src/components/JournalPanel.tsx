@@ -1,6 +1,7 @@
 import { useGame } from "../game/GameContext";
 import { Badge } from "./Badge";
 import { DailyWinners } from "./DailyWinners";
+import { CurrentRequest } from "./CurrentRequest";
 import {
   experimentStatusLabel,
   rarity as rarityStyle,
@@ -36,27 +37,31 @@ function JournalRow({ e }: { e: JournalEntry }) {
 }
 
 /**
- * Right panel: a scrollable Hybrid Journal of past crossbreeds, with the Daily Winners /
- * challenge status pinned at the bottom. Used by the desktop right column and the mobile
- * "Journal" tab.
+ * Right panel, top → bottom: Today's Request (round status) · Daily Winners (moved up — the
+ * most exciting info, seen first) · Hybrid Journal (moved down). The journal list is the only
+ * part that scrolls: it's capped to ~10 rows tall and overflows internally, so the panel
+ * itself doesn't grow. Used by the desktop right column and the mobile "Journal" tab.
  */
 export function JournalPanel() {
   const { journal } = useGame();
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      <div className="gh-panel flex min-h-0 flex-1 flex-col px-3 py-2.5">
+    <div className="gh-scroll flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-0.5">
+      <CurrentRequest />
+      <DailyWinners />
+
+      <div className="gh-panel flex flex-col px-3 py-2.5">
         <div className="mb-2 flex items-center justify-between">
           <span className="gh-title text-[11px] text-garden-mint">Hybrid Journal</span>
           <Badge className="border-garden-moss text-garden-parch/70">{journal.length} blooms</Badge>
         </div>
-        <ul className="gh-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-1">
+        {/* Cap the list at ~10 rows (each ≈ 2.1rem incl. gap); the rest scrolls in place. */}
+        <ul className="gh-scroll flex max-h-[22rem] flex-col gap-1.5 overflow-y-auto pr-1">
           {journal.map((e) => (
             <JournalRow key={e.id} e={e} />
           ))}
         </ul>
       </div>
-      <DailyWinners />
     </div>
   );
 }

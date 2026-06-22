@@ -1,32 +1,46 @@
-import { CurrentRequest } from "./CurrentRequest";
 import { ParentPot } from "./ParentPot";
 import { HybridPot } from "./HybridPot";
 import { EnvironmentSelector } from "./EnvironmentSelector";
+import { GreenhouseScene } from "./GreenhouseScene";
+import { StarterGarden } from "./StarterGarden";
 import { useGame } from "../game/GameContext";
 
 /**
- * The Greenhouse — the central play area: the current request, the two parent pots flanking
- * the focal Hybrid Pot (which IS the crossbreed button now, Stage 6D), and the Light/Water/
- * Soil dials. There is no bottom CTA anymore — that removed the laptop viewport overflow.
- * Transient breeding messages (low-SOL, post-bloom refresh) surface as fixed toasts so they
- * never grow the column height.
+ * The Greenhouse — the central play area, now staged as a cozy greenhouse interior:
+ *
+ *   greenhouse scene (back)  →  starter flowers planted on the floor  →  the pot row floating
+ *   above the scene  (Parent A · Hybrid Pot · Parent B)
+ *
+ * The pot layer is pointer-events-none with the pots re-enabled, so drags on the planted
+ * starters behind/around them still register. Today's Request moved to the right info panel,
+ * so the center is purely the scene + breeding controls. The Light/Water/Soil dials sit in a
+ * framed control strip below the scene. Transient breeding messages surface as fixed toasts so
+ * they never grow the column height.
  */
 export function Greenhouse() {
   const { breedError, bloomToast, retryRefresh } = useGame();
 
   return (
     <div className="flex h-full flex-col gap-3">
-      <CurrentRequest />
+      {/* The greenhouse interior: animated scene + planted starters + floating pots. */}
+      <div className="relative min-h-[400px] flex-1 overflow-hidden rounded-xl border border-garden-moss/70 bg-garden-deep/40 shadow-panel">
+        <GreenhouseScene />
+        <StarterGarden />
 
-      <div className="flex flex-1 flex-col items-center justify-center gap-4">
-        <div className="flex items-end justify-center gap-2 md:gap-4 xl:gap-6">
-          <ParentPot pot="A" label="Parent A" />
-          <HybridPot />
-          <ParentPot pot="B" label="Parent B" />
+        {/* Pot row — floats above the scene with a soft drop shadow. The layer ignores
+            pointer events so starters behind it stay draggable; the pots opt back in. */}
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center px-3">
+          <div className="pointer-events-auto flex items-end justify-center gap-2 [filter:drop-shadow(0_16px_18px_rgba(0,0,0,0.45))] md:gap-4 xl:gap-6">
+            <ParentPot pot="A" label="Parent A" />
+            <HybridPot />
+            <ParentPot pot="B" label="Parent B" />
+          </div>
         </div>
       </div>
 
+      {/* Control dials */}
       <div className="gh-panel px-3 py-3">
+        <span className="gh-title mb-2 block text-[10px] text-garden-mint/80">Greenhouse Controls</span>
         <EnvironmentSelector />
       </div>
 
