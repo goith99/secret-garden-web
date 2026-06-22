@@ -1,5 +1,6 @@
 import { useGame } from "../game/GameContext";
 import { Badge } from "./Badge";
+import { GardenerMenu } from "./GardenerMenu";
 import { roundStatusLabel } from "../mocks/presentation";
 
 /** Slim brand bar. Kept short so the desktop main view fits one screen without scrolling. */
@@ -24,10 +25,8 @@ export function AppHeader({ compact = false }: { compact?: boolean }) {
         <Badge className="border-garden-gold/70 bg-garden-gold/10 text-garden-gold">
           {roundStatusLabel(challenge.status)}
         </Badge>
-        {/* Placeholder for a future "Connect Wallet" entry point (Stage 6B). */}
-        <span className="hidden font-pixel text-[9px] uppercase tracking-wide text-garden-parch/40 sm:inline">
-          guest gardener
-        </span>
+        {/* Stage 6B: real connected gardener identity + leave action. */}
+        <GardenerMenu />
       </div>
     </header>
   );
