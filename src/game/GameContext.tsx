@@ -32,8 +32,13 @@ import {
   ExperimentStatus,
   FlowerStatus,
   GenomeStatus,
+  RoundStatus,
 } from "../types";
 import { MOCK_FLOWERS, MOCK_JOURNAL, MOCK_CHALLENGE, MOCK_WINNERS } from "../mocks/data";
+import { useGardenActions, TxError } from "../program/transactions";
+
+const INSUFFICIENT_SOL_MSG =
+  "Your garden needs a little more SOL to grow. Add funds and try again.";
 
 /**
  * Real on-chain data injected by the connected app (Stage 6C). When omitted (e.g. tests),
@@ -55,11 +60,15 @@ interface GameContextValue {
   phase: BreedPhaseKey;
   phaseLabel: string;
   bothPotsFilled: boolean;
-  isCycling: boolean; // mid mocked-cycle (Confirm..Growing) — button shows a spinner & disables
+  isCycling: boolean; // mid breeding cycle (Confirm..Growing) — button shows a spinner & disables
+  /** Player-vocabulary breeding problem (e.g. low SOL) shown under the crossbreed CTA. */
+  breedError: string | null;
   journal: JournalEntry[];
   challenge: Challenge;
   winners: DailyWinner[];
   activeTab: MobileTab;
+  /** Flower currently being submitted to the round (GO button) — spinner/disable, or null. */
+  submittingId: string | null;
 
   setActiveTab: (t: MobileTab) => void;
   selectFlower: (id: string) => void;
@@ -71,6 +80,10 @@ interface GameContextValue {
   startCrossbreed: () => void;
   collectBloom: () => void;
   resetAfterFailure: () => void;
+  /** Whether a flower may be entered into the active round right now (GO enabled). */
+  canSubmit: (flower: Flower) => boolean;
+  /** Submit a flower to the active round (GO). Optimistic, then refetch confirms. */
+  submitFlower: (flower: Flower) => void;
   /** DEV-only demo: jump to the "Bloom Failed" state to exercise that label. */
   simulateFailure: () => void;
 }
@@ -84,22 +97,41 @@ type ActivePhase = "Confirm" | "Waiting" | "Growing" | "BloomReady" | "Failed";
 export function GameProvider({
   children,
   initial,
+  onRefetch,
 }: {
   children: ReactNode;
   initial?: GardenInitial;
+  /** Reload real on-chain data (Stage 6D). When provided, breeding/submit use the real path. */
+  onRefetch?: () => void;
 }) {
+  const actions = useGardenActions();
   const [shelf, setShelf] = useState<Flower[]>(initial?.flowers ?? MOCK_FLOWERS);
   const [potA, setPotA] = useState<Flower | null>(null);
   const [potB, setPotB] = useState<Flower | null>(null);
   const [selectedFlowerId, setSelectedFlowerId] = useState<string | null>(null);
   const [environment, setEnv] = useState<Environment>({ light: 1, water: 1, soil: 1 });
   const [activePhase, setActivePhase] = useState<ActivePhase | null>(null); // null = at rest
+  const [breedError, setBreedError] = useState<string | null>(null);
+  const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [journal, setJournal] = useState<JournalEntry[]>(initial?.journal ?? MOCK_JOURNAL);
   const [activeTab, setActiveTab] = useState<MobileTab>("garden");
 
   // Real on-chain challenge/winners (read-only in 6C); fall back to mocks when standalone.
   const challenge = initial?.challenge ?? MOCK_CHALLENGE;
   const winners = initial?.winners ?? MOCK_WINNERS;
+
+  // Adopt freshly-refetched chain data: useGardenData hands us new array identities only when
+  // a reload actually produced new flowers/journal, so this re-syncs the shelf after a
+  // claim / breeding / submit without clobbering the UI on every render.
+  const realFlowers = initial?.flowers;
+  const realJournal = initial?.journal;
+  useEffect(() => {
+    // External (chain) data flowing into local state — see useGardenData for the same pattern.
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (realFlowers) setShelf(realFlowers);
+    if (realJournal) setJournal(realJournal);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [realFlowers, realJournal]);
 
   const timers = useRef<number[]>([]);
   const nextIndex = useRef<number>(10); // continues the mock flowerIndex sequence
@@ -161,18 +193,64 @@ export function GameProvider({
     setEnv((e) => ({ ...e, [kind]: optionIndex }));
   }, []);
 
-  // MOCKED timed cycle. Real flow (sign tx → queue → MPC → callback) is Stage 6D.
+  // Real breeding (Stage 6D): sign start_breeding → queue → poll the experiment account until
+  // the MPC callback lands. Phases map to the approved player labels:
+  //   Confirm  (Confirm in Wallet)  — awaiting wallet approval + tx confirmation
+  //   Waiting  (Waiting in Greenhouse) — queued, polling the experiment every 5s (≤10 min)
+  //   BloomReady — experiment Completed; collect refetches to reveal the hybrid
+  //   Failed   (Bloom Failed. Try again.) — failed / timed out on-chain
+  // When `onRefetch` is absent (standalone/demo with mocks) it walks a short timed cycle.
   const startCrossbreed = useCallback(() => {
-    if (!bothPotsFilled || activePhase) return;
+    if (!bothPotsFilled || activePhase || !potA || !potB) return;
     clearTimers();
+    setBreedError(null);
+
+    if (!onRefetch) {
+      // Standalone demo: keep the original mocked cycle so the UI still animates.
+      setActivePhase("Confirm");
+      timers.current.push(window.setTimeout(() => setActivePhase("Waiting"), 1100));
+      timers.current.push(window.setTimeout(() => setActivePhase("Growing"), 2500));
+      timers.current.push(window.setTimeout(() => setActivePhase("BloomReady"), 4300));
+      return;
+    }
+
+    const parentA = potA;
+    const parentB = potB;
     setActivePhase("Confirm");
-    timers.current.push(window.setTimeout(() => setActivePhase("Waiting"), 1100));
-    timers.current.push(window.setTimeout(() => setActivePhase("Growing"), 2500));
-    timers.current.push(window.setTimeout(() => setActivePhase("BloomReady"), 4300));
-  }, [bothPotsFilled, activePhase, clearTimers]);
+    void (async () => {
+      try {
+        const { experiment } = await actions.startBreeding({
+          flowerAIndex: parentA.flowerIndex,
+          flowerBIndex: parentB.flowerIndex,
+          environment,
+        });
+        setActivePhase("Waiting"); // tx confirmed; the MPC is now running
+        const outcome = await actions.pollBreeding(experiment);
+        setActivePhase(outcome === "completed" ? "BloomReady" : "Failed");
+      } catch (e) {
+        if (e instanceof TxError && e.kind === "rejected") {
+          setActivePhase(null); // wallet declined — silently return to Ready
+        } else {
+          if (e instanceof TxError && e.kind === "insufficient") {
+            setBreedError(INSUFFICIENT_SOL_MSG);
+          }
+          setActivePhase("Failed");
+        }
+      }
+    })();
+  }, [bothPotsFilled, activePhase, potA, potB, environment, actions, onRefetch, clearTimers]);
 
   const collectBloom = useCallback(() => {
     if (activePhase !== "BloomReady" || !potA || !potB) return;
+    // Real mode: the hybrid is already on-chain — refetch to load it, then reset the pots.
+    if (onRefetch) {
+      onRefetch();
+      setPotA(null);
+      setPotB(null);
+      setActivePhase(null);
+      setBreedError(null);
+      return;
+    }
     const generation = Math.max(potA.generation, potB.generation) + 1;
     const idx = nextIndex.current++;
     const rarity = ((potA.rarity + potB.rarity) % 4) + 1;
@@ -205,17 +283,54 @@ export function GameProvider({
     setPotA(null);
     setPotB(null);
     setActivePhase(null);
-  }, [activePhase, potA, potB]);
+  }, [activePhase, potA, potB, onRefetch]);
 
   const resetAfterFailure = useCallback(() => {
     clearTimers();
     setActivePhase(null);
+    setBreedError(null);
   }, [clearTimers]);
 
   const simulateFailure = useCallback(() => {
     clearTimers();
     setActivePhase("Failed");
   }, [clearTimers]);
+
+  // GO (submit_entry): only when a real round is Open AND this flower is still Active.
+  const canSubmit = useCallback(
+    (flower: Flower): boolean =>
+      !!onRefetch &&
+      challenge.roundId > 0 &&
+      challenge.status === RoundStatus.Open &&
+      flower.status === FlowerStatus.Active &&
+      submittingId === null,
+    [onRefetch, challenge.roundId, challenge.status, submittingId],
+  );
+
+  const submitFlower = useCallback(
+    (flower: Flower) => {
+      if (!onRefetch || !canSubmit(flower)) return;
+      setSubmittingId(flower.id);
+      void (async () => {
+        try {
+          await actions.submitEntry({ roundId: challenge.roundId, flowerRecord: flower.id });
+          // Optimistically reflect the submission, then refetch to confirm against chain.
+          setShelf((s) =>
+            s.map((f) =>
+              f.id === flower.id ? { ...f, status: FlowerStatus.Submitted } : f,
+            ),
+          );
+          onRefetch();
+        } catch {
+          // Wallet declined or tx failed: leave the flower Active (no error surfaced here —
+          // the GO button simply stays available for another try).
+        } finally {
+          setSubmittingId(null);
+        }
+      })();
+    },
+    [onRefetch, canSubmit, actions, challenge.roundId],
+  );
 
   const value = useMemo<GameContextValue>(
     () => ({
@@ -228,10 +343,12 @@ export function GameProvider({
       phaseLabel: BreedPhase[phase],
       bothPotsFilled,
       isCycling,
+      breedError,
       journal,
       challenge,
       winners,
       activeTab,
+      submittingId,
       setActiveTab,
       selectFlower,
       placeInPot,
@@ -241,12 +358,15 @@ export function GameProvider({
       startCrossbreed,
       collectBloom,
       resetAfterFailure,
+      canSubmit,
+      submitFlower,
       simulateFailure,
     }),
     [
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
-      journal, challenge, winners, activeTab, selectFlower, placeInPot, autoPlace, clearPot,
-      setEnvironment, startCrossbreed, collectBloom, resetAfterFailure, simulateFailure,
+      breedError, journal, challenge, winners, activeTab, submittingId, selectFlower, placeInPot,
+      autoPlace, clearPot, setEnvironment, startCrossbreed, collectBloom, resetAfterFailure,
+      canSubmit, submitFlower, simulateFailure,
     ],
   );
 

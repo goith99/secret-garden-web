@@ -3,8 +3,9 @@
  * "RPC", "error"). Shown by the connected app while real on-chain data is fetched, when a
  * fetch fails, or when a connected wallet has no garden yet.
  */
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { PlayerButton } from "../components/PlayerButton";
+import { useGardenActions, TxError } from "../program/transactions";
 
 function Centered({ children }: { children: ReactNode }) {
   return (
@@ -31,8 +32,40 @@ export function GardenLoading() {
   );
 }
 
-/** A connected wallet that has never claimed starters (no PlayerProfile on-chain). */
+/**
+ * A connected wallet that has never claimed starters (no PlayerProfile on-chain). The
+ * "Claim Your Starter Flowers" button sends the real claim_starters transaction (Stage 6D)
+ * and, on success, refetches so the garden loads with the six new flowers.
+ */
 export function GardenEmpty({ onRefresh }: { onRefresh: () => void }) {
+  const { claimStarters, ready } = useGardenActions();
+  const [claiming, setClaiming] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const onClaim = async () => {
+    setProblem(null);
+    setClaiming(true);
+    try {
+      await claimStarters();
+      onRefresh(); // reload real data — the garden now has 6 starters
+    } catch (e) {
+      // Wallet declined → silently return; on-chain/funds problems → a player-vocabulary line.
+      if (e instanceof TxError) {
+        if (e.kind === "insufficient") {
+          setProblem(
+            "Your garden needs a little more SOL to grow. Add funds and try again.",
+          );
+        } else if (e.kind !== "rejected") {
+          setProblem("Something went wrong. Try again.");
+        }
+      } else {
+        setProblem("Something went wrong. Try again.");
+      }
+    } finally {
+      setClaiming(false);
+    }
+  };
+
   return (
     <Centered>
       <div className="flex flex-col items-center gap-4">
@@ -43,14 +76,28 @@ export function GardenEmpty({ onRefresh }: { onRefresh: () => void }) {
           Your garden is empty
         </h2>
         <p className="font-body text-sm leading-relaxed text-garden-parch/80">
-          Claim your starter flowers to begin. Planting opens in the next update —
-          check back once your starters are sown.
+          Claim your six starter flowers to begin growing and crossbreeding.
         </p>
-        <div className="w-44">
-          <PlayerButton variant="muted" onClick={onRefresh}>
-            Check again
+        <div className="w-56">
+          <PlayerButton
+            variant="action"
+            busy={claiming}
+            disabled={claiming || !ready}
+            onClick={onClaim}
+          >
+            Claim Your Starter Flowers
           </PlayerButton>
         </div>
+        {problem && (
+          <p className="font-body text-sm leading-relaxed text-garden-rose">{problem}</p>
+        )}
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="font-pixel text-[10px] uppercase tracking-wide text-garden-parch/60 hover:text-garden-mint"
+        >
+          Check again
+        </button>
       </div>
     </Centered>
   );

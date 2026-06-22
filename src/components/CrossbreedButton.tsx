@@ -21,7 +21,7 @@ const VARIANT_FOR: Record<BreedPhaseKey, ButtonVariant> = {
 };
 
 export function CrossbreedButton() {
-  const { phase, phaseLabel, isCycling, startCrossbreed, collectBloom, resetAfterFailure, simulateFailure } =
+  const { phase, phaseLabel, isCycling, breedError, startCrossbreed, collectBloom, resetAfterFailure, simulateFailure } =
     useGame();
 
   const onClick = () => {
@@ -37,6 +37,9 @@ export function CrossbreedButton() {
       <PlayerButton variant={VARIANT_FOR[phase]} busy={isCycling} disabled={disabled} onClick={onClick}>
         {phaseLabel}
       </PlayerButton>
+      {breedError && (
+        <p className="text-center font-body text-xs leading-snug text-garden-rose">{breedError}</p>
+      )}
       {/* DEV-ONLY demo affordance to exercise the "Bloom Failed" label; stripped from prod. */}
       {import.meta.env.DEV && isCycling && (
         <button
