@@ -27,9 +27,10 @@ export function Greenhouse() {
         <NightGardenScene />
         <StarterGarden />
 
-        {/* Pot row — floats above the scene with a soft drop shadow. The layer ignores
-            pointer events so starters behind it stay draggable; the pots opt back in. */}
-        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center px-3">
+        {/* Pot row — floats in the UPPER half of the scene, clearly above the starter row in
+            the lower half (no overlap at any zoom). The layer ignores pointer events so
+            starters below it stay draggable; the pots opt back in. */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex h-1/2 items-center justify-center px-3">
           <div className="pointer-events-auto flex items-end justify-center gap-2 [filter:drop-shadow(0_16px_18px_rgba(0,0,0,0.45))] md:gap-4 xl:gap-6">
             <ParentPot pot="A" label="Parent A" />
             <HybridPot />
