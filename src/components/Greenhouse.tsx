@@ -1,14 +1,14 @@
 import { ParentPot } from "./ParentPot";
 import { HybridPot } from "./HybridPot";
 import { EnvironmentSelector } from "./EnvironmentSelector";
-import { GreenhouseScene } from "./GreenhouseScene";
+import { NightGardenScene } from "./NightGardenScene";
 import { StarterGarden } from "./StarterGarden";
 import { useGame } from "../game/GameContext";
 
 /**
- * The Greenhouse — the central play area, now staged as a cozy greenhouse interior:
+ * The Greenhouse — the central play area, staged as a cozy night-garden scene:
  *
- *   greenhouse scene (back)  →  starter flowers planted on the floor  →  the pot row floating
+ *   night garden (back)  →  starter flowers growing from the grass  →  the pot row floating
  *   above the scene  (Parent A · Hybrid Pot · Parent B)
  *
  * The pot layer is pointer-events-none with the pots re-enabled, so drags on the planted
@@ -22,9 +22,9 @@ export function Greenhouse() {
 
   return (
     <div className="flex h-full flex-col gap-3">
-      {/* The greenhouse interior: animated scene + planted starters + floating pots. */}
+      {/* The night garden: animated scene + planted starters + floating pots. */}
       <div className="relative min-h-[400px] flex-1 overflow-hidden rounded-xl border border-garden-moss/70 bg-garden-deep/40 shadow-panel">
-        <GreenhouseScene />
+        <NightGardenScene />
         <StarterGarden />
 
         {/* Pot row — floats above the scene with a soft drop shadow. The layer ignores

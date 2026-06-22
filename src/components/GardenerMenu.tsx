@@ -30,11 +30,11 @@ export function GardenerMenu() {
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-1.5 rounded-md border border-garden-moss/60 bg-garden-deep/40 px-2 py-1 font-pixel text-[9px] uppercase tracking-wide text-garden-parch/80 transition hover:border-garden-mint/60 hover:text-garden-mint focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan"
+        className="flex min-h-9 items-center gap-2 rounded-md border border-garden-gold/70 bg-garden-gold/10 px-4 py-2 font-pixel text-sm uppercase tracking-wide text-garden-gold transition hover:bg-garden-gold/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan"
       >
-        <span aria-hidden>🌱</span>
+        <span aria-hidden className="text-base leading-none">🌱</span>
         <span>Gardener {shortName}</span>
-        <span aria-hidden className="text-garden-parch/50">
+        <span aria-hidden className="text-garden-gold/70">
           ▾
         </span>
       </button>

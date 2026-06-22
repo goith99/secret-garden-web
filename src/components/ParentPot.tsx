@@ -11,8 +11,7 @@ import { flowerLabel } from "../mocks/presentation";
  *    empty/filled pot places it. Tapping a filled pot with nothing selected clears it.
  */
 export function ParentPot({ pot, label }: { pot: PotId; label: string }) {
-  const { shelf, potA, potB, selectedFlowerId, placeInPot, clearPot, selectFlower, isCycling } =
-    useGame();
+  const { shelf, potA, potB, selectedFlowerId, placeInPot, clearPot, isCycling } = useGame();
   const flower: Flower | null = pot === "A" ? potA : potB;
   const [dragOver, setDragOver] = useState(false);
 
@@ -66,7 +65,9 @@ export function ParentPot({ pot, label }: { pot: PotId; label: string }) {
           </div>
         ) : (
           <span className="relative z-10 mb-4 px-2 text-center font-pixel text-[10px] uppercase leading-tight tracking-wide text-garden-parch/60">
-            {armed ? "Tap to place" : "Drop a flower"}
+            {/* desktop drags, mobile (<768px) taps — show the matching verb, single line */}
+            <span className="md:hidden">Tap to place</span>
+            <span className="hidden md:inline">Drop a flower</span>
           </span>
         )}
         {flower && !isCycling && (
@@ -87,20 +88,6 @@ export function ParentPot({ pot, label }: { pot: PotId; label: string }) {
         <span className="max-w-[8rem] truncate font-pixel text-[10px] text-garden-cream">
           {flowerLabel(flower.visualSpeciesId, flower.flowerIndex)}
         </span>
-      )}
-      {/* allow tapping a selected flower onto the pot label too */}
-      {armed && !flower && (
-        <button
-          type="button"
-          onClick={() => {
-            const f = shelf.find((x) => x.id === selectedFlowerId);
-            if (f) placeInPot(pot, f);
-            else selectFlower("");
-          }}
-          className="font-pixel text-[9px] uppercase tracking-wide text-garden-cyan underline-offset-2 hover:underline"
-        >
-          place here
-        </button>
       )}
     </div>
   );
