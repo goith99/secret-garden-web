@@ -12,8 +12,8 @@
 
 // --- numeric status codes (mirror the program's constants.rs; confirmed against IDL u8s) ---
 export const GenomeStatus = {
-  Pending: 0,
-  Encrypted: 1, // GENOME_STATUS_ENCRYPTED in the program/tests
+  Starter: 0, // GENOME_STATUS_STARTER — claimed starter, plaintext/known genome
+  Encrypted: 1, // GENOME_STATUS_ENCRYPTED — bred hybrid, sealed genome
   Revealed: 2,
 } as const;
 export type GenomeStatusCode = (typeof GenomeStatus)[keyof typeof GenomeStatus];

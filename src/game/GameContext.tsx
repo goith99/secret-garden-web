@@ -21,6 +21,8 @@ import {
 import {
   BreedPhase,
   type BreedPhaseKey,
+  type Challenge,
+  type DailyWinner,
   type Environment,
   type EnvironmentKind,
   type Flower,
@@ -33,6 +35,17 @@ import {
 } from "../types";
 import { MOCK_FLOWERS, MOCK_JOURNAL, MOCK_CHALLENGE, MOCK_WINNERS } from "../mocks/data";
 
+/**
+ * Real on-chain data injected by the connected app (Stage 6C). When omitted (e.g. tests),
+ * the provider falls back to the Stage 6A mock data so it still works standalone.
+ */
+export interface GardenInitial {
+  flowers: Flower[];
+  journal: JournalEntry[];
+  challenge: Challenge;
+  winners: DailyWinner[];
+}
+
 interface GameContextValue {
   shelf: Flower[];
   potA: Flower | null;
@@ -44,8 +57,8 @@ interface GameContextValue {
   bothPotsFilled: boolean;
   isCycling: boolean; // mid mocked-cycle (Confirm..Growing) — button shows a spinner & disables
   journal: JournalEntry[];
-  challenge: typeof MOCK_CHALLENGE;
-  winners: typeof MOCK_WINNERS;
+  challenge: Challenge;
+  winners: DailyWinner[];
   activeTab: MobileTab;
 
   setActiveTab: (t: MobileTab) => void;
@@ -68,15 +81,25 @@ const GameContext = createContext<GameContextValue | null>(null);
 // (NeedTwo / Ready) are DERIVED from the pots, never stored — so no state-syncing effect.
 type ActivePhase = "Confirm" | "Waiting" | "Growing" | "BloomReady" | "Failed";
 
-export function GameProvider({ children }: { children: ReactNode }) {
-  const [shelf, setShelf] = useState<Flower[]>(MOCK_FLOWERS);
+export function GameProvider({
+  children,
+  initial,
+}: {
+  children: ReactNode;
+  initial?: GardenInitial;
+}) {
+  const [shelf, setShelf] = useState<Flower[]>(initial?.flowers ?? MOCK_FLOWERS);
   const [potA, setPotA] = useState<Flower | null>(null);
   const [potB, setPotB] = useState<Flower | null>(null);
   const [selectedFlowerId, setSelectedFlowerId] = useState<string | null>(null);
   const [environment, setEnv] = useState<Environment>({ light: 1, water: 1, soil: 1 });
   const [activePhase, setActivePhase] = useState<ActivePhase | null>(null); // null = at rest
-  const [journal, setJournal] = useState<JournalEntry[]>(MOCK_JOURNAL);
+  const [journal, setJournal] = useState<JournalEntry[]>(initial?.journal ?? MOCK_JOURNAL);
   const [activeTab, setActiveTab] = useState<MobileTab>("garden");
+
+  // Real on-chain challenge/winners (read-only in 6C); fall back to mocks when standalone.
+  const challenge = initial?.challenge ?? MOCK_CHALLENGE;
+  const winners = initial?.winners ?? MOCK_WINNERS;
 
   const timers = useRef<number[]>([]);
   const nextIndex = useRef<number>(10); // continues the mock flowerIndex sequence
@@ -206,8 +229,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       bothPotsFilled,
       isCycling,
       journal,
-      challenge: MOCK_CHALLENGE,
-      winners: MOCK_WINNERS,
+      challenge,
+      winners,
       activeTab,
       setActiveTab,
       selectFlower,
@@ -222,8 +245,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
     }),
     [
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
-      journal, activeTab, selectFlower, placeInPot, autoPlace, clearPot, setEnvironment,
-      startCrossbreed, collectBloom, resetAfterFailure, simulateFailure,
+      journal, challenge, winners, activeTab, selectFlower, placeInPot, autoPlace, clearPot,
+      setEnvironment, startCrossbreed, collectBloom, resetAfterFailure, simulateFailure,
     ],
   );
 

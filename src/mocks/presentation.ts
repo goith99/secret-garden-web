@@ -80,6 +80,8 @@ export function genomeLabel(code: GenomeStatusCode): string {
       return "Sealed Bloom";
     case GenomeStatus.Revealed:
       return "Revealed Bloom";
+    case GenomeStatus.Starter:
+      return "Garden Starter";
     default:
       return "Budding";
   }
