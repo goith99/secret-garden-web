@@ -9,6 +9,20 @@
     height: 100%;
   }
 
+  /* Accessibility: honour the OS "reduce motion" setting by neutralising every animation
+     and transition (greenhouse dust, sway, sparkle spin, etc.). Kept global so new
+     animations are covered automatically. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
   body {
     @apply bg-garden-deep text-garden-cream font-body;
     /* Cozy greenhouse backdrop: layered radial glows (cyan / lavender / gold) over deep

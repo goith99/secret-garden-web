@@ -45,7 +45,7 @@ export function Footer() {
         {/* Right — social links */}
         <div className="flex items-center gap-4">
           <a
-            href="https://github.com/goith99/secret-garden"
+            href="https://github.com/aripudin99/secret-garden"
             target="_blank"
             rel="noopener noreferrer"
             aria-label="GitHub repository"
