@@ -11,19 +11,23 @@ import { flowerLabel, genomeLabel, rarity as rarityStyle } from "../mocks/presen
  *  - Desktop: native HTML5 drag (carries the flower id) into a Parent Pot.
  *  - Mobile/touch: tap → `onActivate` (parent decides: select, or auto-place + switch tab).
  *
- * The "GO" pill (Stage 6D) submits this flower to the active competition round (submit_entry).
- * It sits as an absolute sibling of the card button — never nested inside it — and is enabled
- * only when a round is Open and the flower is still Active; otherwise it's disabled with a
- * "No open challenge right now" tooltip. A flower already entered shows an "Entered" badge.
+ * The "SUBMIT TO CHALLENGE" button (Stage 6D) submits this flower to the active competition
+ * round. It's a block sibling under the card button — never nested inside it — shown only when
+ * `showSubmit` is set (hybrids only; starters can't be entered). It's enabled only when a round
+ * is Open and the flower is still Active; otherwise it's disabled with a "No open challenge
+ * right now" tooltip. A flower already entered shows an "Entered" badge instead.
  */
 export function FlowerCard({
   flower,
   selected,
   onActivate,
+  showSubmit,
 }: {
   flower: Flower;
   selected: boolean;
   onActivate: (flower: Flower) => void;
+  /** Show the "SUBMIT TO CHALLENGE" control. Hybrids only — starters are never submittable. */
+  showSubmit: boolean;
 }) {
   const { canSubmit, submitFlower, submittingId } = useGame();
   const r = rarityStyle(flower.rarity);
@@ -43,7 +47,7 @@ export function FlowerCard({
   };
 
   return (
-    <div className="relative w-full min-w-0">
+    <div className="flex w-full min-w-0 flex-col gap-1">
       <button
         type="button"
         draggable
@@ -72,28 +76,29 @@ export function FlowerCard({
         </span>
       </button>
 
-      {submitted ? (
-        <span
-          className="pointer-events-none absolute bottom-1 right-1 rounded-md border border-garden-gold/70 bg-garden-deep/80 px-1.5 py-0.5 font-pixel text-[9px] uppercase tracking-wide text-garden-gold"
-          title="Already entered in the challenge"
-        >
-          Entered
-        </span>
-      ) : (
-        <button
-          type="button"
-          onClick={onGo}
-          disabled={!goEnabled || submitting}
-          title={goEnabled ? "Enter this flower in the challenge" : "No open challenge right now"}
-          className={`absolute bottom-1 right-1 rounded-md border px-2 py-0.5 font-pixel text-[10px] uppercase tracking-wide transition
-            focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan
-            ${goEnabled && !submitting
-              ? "border-garden-cyan bg-garden-cyan/20 text-garden-cyan hover:bg-garden-cyan/35"
-              : "cursor-not-allowed border-garden-moss/50 bg-garden-deep/60 text-garden-parch/40"}`}
-        >
-          {submitting ? "…" : "GO"}
-        </button>
-      )}
+      {showSubmit &&
+        (submitted ? (
+          <span
+            className="rounded-md border border-garden-gold/70 bg-garden-deep/80 px-2 py-1 text-center font-pixel text-[9px] uppercase tracking-wide text-garden-gold"
+            title="Already entered in the challenge"
+          >
+            Entered
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={onGo}
+            disabled={!goEnabled || submitting}
+            title={goEnabled ? "Enter this flower in the challenge" : "No open challenge right now"}
+            className={`w-full rounded-md border px-2 py-1 font-pixel text-[9px] uppercase tracking-wide transition
+              focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan
+              ${goEnabled && !submitting
+                ? "border-garden-cyan bg-garden-cyan/20 text-garden-cyan hover:bg-garden-cyan/35"
+                : "cursor-not-allowed border-garden-moss/50 bg-garden-deep/60 text-garden-parch/40"}`}
+          >
+            {submitting ? "…" : "Submit to Challenge"}
+          </button>
+        ))}
     </div>
   );
 }

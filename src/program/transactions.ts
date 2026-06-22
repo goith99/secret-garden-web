@@ -52,8 +52,9 @@ import {
   roundPda,
   experimentPda,
   entryPda,
+  fetchFlower,
 } from "./accounts";
-import type { Environment } from "../types";
+import type { Environment, Flower } from "../types";
 
 // Arcium cluster the breed circuit is deployed + finalized on (devnet). Constant, not read
 // from env (getArciumEnv() is node-only); see tests/breeding.devnet.ts header (cluster 456).
@@ -196,6 +197,8 @@ function arciumAccountsFor(computationOffset: BN) {
 export interface StartBreedingResult {
   experiment: PublicKey;
   signature: string;
+  /** Flower index the offspring will occupy once the MPC callback lands (for a follow-up read). */
+  offspringIndex: number;
 }
 
 export interface GardenActions {
@@ -209,6 +212,8 @@ export interface GardenActions {
   }) => Promise<StartBreedingResult>;
   submitEntry: (args: { roundId: number; flowerRecord: string }) => Promise<string>;
   pollBreeding: (experiment: PublicKey) => Promise<ExperimentOutcome>;
+  /** Read one of the connected wallet's FlowerRecords by index (e.g. a new offspring). */
+  fetchFlower: (index: number) => Promise<Flower | null>;
 }
 
 /**
@@ -312,7 +317,7 @@ export function useGardenActions(): GardenActions {
         .transaction();
 
       const signature = await sendAndConfirm(send, connection, tx);
-      return { experiment, signature };
+      return { experiment, signature, offspringIndex: profile.nextFlowerIndex };
     },
     [program, publicKey, connection, send],
   );
@@ -352,8 +357,23 @@ export function useGardenActions(): GardenActions {
     [program],
   );
 
+  const fetchFlowerRecord = useCallback(
+    (index: number): Promise<Flower | null> => {
+      if (!program || !publicKey) return Promise.resolve(null);
+      return fetchFlower(program, publicKey, index);
+    },
+    [program, publicKey],
+  );
+
   return useMemo(
-    () => ({ ready, claimStarters, startBreeding, submitEntry, pollBreeding }),
-    [ready, claimStarters, startBreeding, submitEntry, pollBreeding],
+    () => ({
+      ready,
+      claimStarters,
+      startBreeding,
+      submitEntry,
+      pollBreeding,
+      fetchFlower: fetchFlowerRecord,
+    }),
+    [ready, claimStarters, startBreeding, submitEntry, pollBreeding, fetchFlowerRecord],
   );
 }
