@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { AppWalletProvider } from "./wallet/WalletProvider";
 import { useGardener } from "./wallet/useGardener";
 import { GameProvider } from "./game/GameContext";
@@ -7,6 +8,7 @@ import { DesktopLayout } from "./layouts/DesktopLayout";
 import { MobileLayout } from "./layouts/MobileLayout";
 import { DisconnectedScreen } from "./screens/DisconnectedScreen";
 import { GardenEmpty, GardenError, GardenLoading } from "./screens/GardenStates";
+import { HowToPlayModal } from "./components/HowToPlayModal";
 
 /**
  * Root. Stage 6C: behind the Stage 6B wallet gate, real on-chain devnet data drives the
@@ -49,7 +51,23 @@ function ConnectedApp() {
 
 function Gate() {
   const { connected } = useGardener();
-  return connected ? <ConnectedApp /> : <DisconnectedScreen />;
+  // Show the How to Play guide once per wallet connection — every false→true transition
+  // (a fresh connect, or a disconnect + reconnect). No localStorage by design (per spec).
+  const [showHowToPlay, setShowHowToPlay] = useState(false);
+  const prevConnected = useRef(false);
+  useEffect(() => {
+    // Reacting to an external system (the wallet) flipping to connected — set the flag once
+    // on the rising edge, then record the level for the next comparison.
+    if (connected && !prevConnected.current) setShowHowToPlay(true);
+    prevConnected.current = connected;
+  }, [connected]);
+
+  return (
+    <>
+      {connected ? <ConnectedApp /> : <DisconnectedScreen />}
+      {showHowToPlay && <HowToPlayModal onClose={() => setShowHowToPlay(false)} />}
+    </>
+  );
 }
 
 export default function App() {
