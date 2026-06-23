@@ -237,12 +237,28 @@ export function useGardenActions(): GardenActions {
   const claimStarters = useCallback(async (): Promise<string> => {
     if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
     const owner = publicKey;
+    const profile = profilePda(owner);
+
+    // claim_starters takes `profile` as `mut` (NOT `init`) — the program requires the
+    // PlayerProfile PDA to already exist. A brand-new wallet has none, so create it first in
+    // a SEPARATE, confirmed transaction: the account must be on-chain before claim_starters
+    // can reference it (a single combined tx would still see an uninitialised profile). If
+    // the profile already exists (created earlier but starters not yet claimed), skip this.
+    const existing = await program.account.playerProfile.fetchNullable(profile);
+    if (!existing) {
+      const createTx = await program.methods
+        .createProfile()
+        .accountsPartial({ owner, config: configPda(), profile })
+        .transaction();
+      await sendAndConfirm(send, connection, createTx);
+    }
+
     const tx = await program.methods
       .claimStarters()
       .accountsPartial({
         owner,
         config: configPda(),
-        profile: profilePda(owner),
+        profile,
         flower0: flowerPda(owner, 0),
         flower1: flowerPda(owner, 1),
         flower2: flowerPda(owner, 2),
