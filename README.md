@@ -1,63 +1,57 @@
 # Secret Garden Protocol — Frontend
 
-A cozy 2D pixel-art botanical greenhouse where you crossbreed flowers to win daily
-challenges. This is the player-facing client for the Secret Garden Protocol Solana
-program (a separate repo).
+A cozy botanical night garden where you crossbreed flowers to win daily challenges.
+Built on Solana Devnet with Arcium MPC for private genome breeding.
 
-> **Stage 6A — static UI foundation, MOCK DATA ONLY.**
-> No wallet connection, no RPC, no Anchor/web3.js. Every flower, challenge, journal entry
-> and the crossbreed flow is mocked. Wiring to the chain comes in Stages 6B–6D.
+🌸 **Live**: https://secret-garden-web-app.vercel.app
+📦 **Program repo**: https://github.com/goith99/secret-garden
 
-## Run it
+## What it does
+
+- Connect Phantom or Solflare wallet (Solana Devnet)
+- Drag two starter flowers into the breeding pots
+- Crossbreed via Arcium MPC — your flower's genome stays encrypted and private
+- Daily competition rounds with hidden scoring — no one knows your score until reveal
+- Top 3 winners revealed by MPC at round end
+
+## Stack
+
+- React + Vite + TypeScript + Tailwind CSS
+- Solana wallet adapter (Phantom + Solflare)
+- Anchor 1.0.2 client (@anchor-lang/core)
+- Arcium MPC (@arcium-hq/client) for encrypted breeding
+- Program ID: `7eMfGCkXavfZeVrwRo3ZH63C7H6mZ6n1HZKJwGkZBddo` (Solana Devnet)
+
+## Run locally
 
 ```bash
 npm install
-npm run dev      # → http://localhost:5173  (Vite prints the URL)
-npm run build    # production build into dist/
-npm run preview  # serve the production build
+npm run dev      # → http://localhost:5173
+npm run build    # production build
 npm run lint     # eslint
 ```
 
-## What works in this stage
+## How to try it (Devnet)
 
-- **Desktop** (≥768px): one screen, no page scroll — three columns: Flower Shelf (left,
-  scrolls internally) · Greenhouse (center, focal) · Hybrid Journal + Daily Winners
-  (right, scrolls internally).
-- **Mobile** (<768px): a dedicated tabbed layout (Flowers · Garden · Journal), Garden
-  default. Tapping a flower in **Flowers** auto-places it into an empty Parent Pot and
-  jumps to **Garden**.
-- **Place parents**: desktop = native HTML5 drag from the shelf into a Parent Pot;
-  touch = tap-to-select then tap a pot (and the mobile auto-place above).
-- **Light / Water / Soil** dials (three options each).
-- **Crossbreed CTA** cycles through the *mocked* player-facing states on a timer:
-  `Select Two Flowers → Crossbreed → Confirm in Wallet → Waiting in Greenhouse →
-  Growing → Bloom Ready`. Collecting a Bloom adds a hybrid to the shelf + a journal entry.
-  (A dev-only "demo: fail" affordance exercises `Bloom Failed. Try again.`)
+1. Install [Phantom](https://phantom.app) or Solflare wallet
+2. Switch wallet network to **Devnet**
+3. Get free devnet SOL at [faucet.solana.com](https://faucet.solana.com)
+4. Open https://secret-garden-web-app.vercel.app
+5. Connect wallet → drag two flowers into the pots → crossbreed!
 
-## Architecture (built so the data SOURCE can be swapped without touching components)
+## Privacy design
 
-```
-src/
-  types.ts                 # UI types mirroring the program IDL accounts (camelCase)
-  mocks/
-    data.ts                # the only mock-data module (replaced by a decode layer in 6C)
-    presentation.ts        # numeric code → player label/colour (species, rarity, traits…)
-  game/GameContext.tsx     # all UI state (pots, selection, tabs, mocked breed phases)
-  hooks/useMediaQuery.ts
-  components/              # FlowerSprite, FlowerCard, ParentPot, HybridPot, PlayerButton,
-                          # CrossbreedButton, EnvironmentSelector, CurrentRequest,
-                          # Greenhouse, FlowerShelf, JournalPanel, DailyWinners, Badge…
-  layouts/                # DesktopLayout, MobileLayout, MobileTabBar
-```
+Flower genomes are encrypted via Arcium MXE (`Enc<Mxe, Genome>`) — the browser
+never sees the raw genome. Competition scores are computed privately by MPC and
+revealed only at round end. Anti-manipulation is enforced at the type level:
+score fabrication is cryptographically impossible.
 
-## Player vocabulary
+## Known limitations (devnet alpha)
 
-The UI never shows developer terms (no MXE / MPC / PDA / ciphertext / callback / etc.).
-Only approved labels are used (see `src/mocks/presentation.ts` and `BreedPhase` in
-`src/types.ts`).
+- Flower visuals are SVG placeholders — pixel art assets coming later
+- Trait names #8 and #9 not yet named
+- Daily Winners panel coming in next update
 
-## Known limitations (intentional for Stage 6A)
+## License
 
-- Flower sprites are pure-SVG placeholders (no real pixel-art assets exist yet).
-- The crossbreed phase machine is mocked (timers), not real on-chain state.
-- No persistence — refreshing resets to the mock data.
+MIT © 2026 goith99
