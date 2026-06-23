@@ -49,6 +49,11 @@ export default {
           "0%,100%": { opacity: "0.25" },
           "50%": { opacity: "1" },
         },
+        // Modal entrance: a quick, calm opacity fade-in (How to Play overlay).
+        fadeIn: {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
         // Fireflies drifting on a slow, wandering loop while their glow pulses. Two subtly
         // different paths so the handful of bugs never move in unison.
         firefly: {
@@ -71,6 +76,7 @@ export default {
         twinkle: "twinkle 3s ease-in-out infinite",
         firefly: "firefly 9s ease-in-out infinite",
         fireflyB: "fireflyB 11s ease-in-out infinite",
+        fadeIn: "fadeIn 0.2s ease-out",
       },
     },
   },
