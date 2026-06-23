@@ -1,7 +1,7 @@
 /**
  * Minimal site footer — full width, below the main layout (NOT inside any column). One row
- * on desktop (copyright · "Powered by Arcium" · social links) that collapses to a centered
- * stack on mobile. It sits in normal flow as a shrink-0 row at the bottom of each layout's
+ * on desktop — left: "© 2026 Secret Garden Protocol · Powered by Arcium" (Arcium a link),
+ * right: social links — collapsing to a centered stack on mobile. It sits in normal flow as a shrink-0 row at the bottom of each layout's
  * flex column, so it pins to the bottom of the viewport without floating fixed. Icons are
  * inline SVG (no icon library) to keep the bundle lean.
  *
@@ -29,18 +29,18 @@ export function Footer() {
   return (
     <footer className="shrink-0 border-t border-garden-moss/50 bg-black/20 px-6 py-3">
       <div className="mx-auto flex max-w-7xl flex-col items-center gap-2 text-xs text-garden-parch/50 lg:flex-row lg:justify-between">
-        {/* Left — copyright */}
-        <span>© 2026 Secret Garden Protocol</span>
-
-        {/* Center — Powered by Arcium (purple accent on hover) */}
-        <a
-          href="https://arcium.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="transition-colors hover:text-garden-lavender"
-        >
-          Powered by Arcium
-        </a>
+        {/* Left — copyright · Powered by Arcium (Arcium link, purple/cyan accent on hover) */}
+        <span>
+          © 2026 Secret Garden Protocol ·{" "}
+          <a
+            href="https://arcium.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="transition-colors hover:text-garden-lavender"
+          >
+            Powered by Arcium
+          </a>
+        </span>
 
         {/* Right — social links */}
         <div className="flex items-center gap-4">

@@ -20,7 +20,7 @@ function GameView() {
 }
 
 function ConnectedApp() {
-  const { flowers, journal, activeRound, playerProfile, loading, error, refetch } =
+  const { flowers, journal, activeRound, playerProfile, gameConfig, loading, error, refetch } =
     useGardenData();
 
   // First load (no data yet) shows the tending state; a background refresh keeps the game up.
@@ -38,6 +38,7 @@ function ConnectedApp() {
         journal,
         challenge: activeRound ?? NO_ACTIVE_ROUND,
         winners: [], // revealed winners arrive with scoring (not yet on devnet) — see notes
+        authority: gameConfig?.authority ?? null, // gates the hidden operator panel
       }}
       onRefetch={refetch}
     >

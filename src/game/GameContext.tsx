@@ -70,6 +70,8 @@ export interface GardenInitial {
   journal: JournalEntry[];
   challenge: Challenge;
   winners: DailyWinner[];
+  /** GameConfig.authority (program operator). Drives the hidden operator panel gate. */
+  authority?: string | null;
 }
 
 interface GameContextValue {
@@ -96,6 +98,10 @@ interface GameContextValue {
   submittingId: string | null;
   /** Inline toast shown when the post-bloom refetch keeps failing (chain has the bloom). */
   bloomToast: string | null;
+  /** GameConfig.authority (or null). The operator panel renders only when this === wallet. */
+  authority: string | null;
+  /** Reload on-chain garden data (operator panel uses it after each authority action). */
+  refetchGarden: () => Promise<boolean>;
 
   setActiveTab: (t: MobileTab) => void;
   selectFlower: (id: string) => void;
@@ -167,6 +173,11 @@ export function GameProvider({
   const challenge = initial?.challenge ?? MOCK_CHALLENGE;
   const winners = initial?.winners ?? MOCK_WINNERS;
   const roundOpen = challenge.roundId > 0 && challenge.status === RoundStatus.Open;
+  const authority = initial?.authority ?? null;
+  const refetchGarden = useCallback(
+    (): Promise<boolean> => (onRefetch ? onRefetch() : Promise.resolve(false)),
+    [onRefetch],
+  );
 
   // Adopt freshly-refetched chain data: useGardenData hands us new array identities only when
   // a reload actually produced new flowers/journal, so this re-syncs the shelf after a
@@ -474,6 +485,8 @@ export function GameProvider({
       activeTab,
       submittingId,
       bloomToast,
+      authority,
+      refetchGarden,
       setActiveTab,
       selectFlower,
       placeInPot,
@@ -492,9 +505,9 @@ export function GameProvider({
     [
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
       newBloom, roundOpen, breedError, journal, challenge, winners, activeTab, submittingId,
-      bloomToast, selectFlower, placeInPot, autoPlace, clearPot, setEnvironment, startCrossbreed,
-      collectBloom, submitBloom, resetAfterFailure, canSubmit, submitFlower, retryRefresh,
-      simulateFailure,
+      bloomToast, authority, refetchGarden, selectFlower, placeInPot, autoPlace, clearPot,
+      setEnvironment, startCrossbreed, collectBloom, submitBloom, resetAfterFailure, canSubmit,
+      submitFlower, retryRefresh, simulateFailure,
     ],
   );
 

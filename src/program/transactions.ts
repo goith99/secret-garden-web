@@ -182,15 +182,17 @@ export async function pollExperiment(
   return "timeout";
 }
 
-// ---- the Arcium account set start_breeding needs (matches breeding.devnet.ts) --------
-function arciumAccountsFor(computationOffset: BN) {
+// ---- the Arcium account set a queued computation needs (matches *.devnet.ts) ----------
+// `circuit` selects the comp-def: "breed" (start_breeding), "score_entry" (queue_score_entry)
+// or "reveal_top3" (queue_reveal_top3) — the exact strings proven in tests/scoring.devnet.ts.
+function arciumAccountsFor(circuit: string, computationOffset: BN) {
   return {
     computationAccount: getComputationAccAddress(ARCIUM_CLUSTER_OFFSET, computationOffset),
     clusterAccount: getClusterAccAddress(ARCIUM_CLUSTER_OFFSET),
     mxeAccount: getMXEAccAddress(PROGRAM_ID),
     mempoolAccount: getMempoolAccAddress(ARCIUM_CLUSTER_OFFSET),
     executingPool: getExecutingPoolAccAddress(ARCIUM_CLUSTER_OFFSET),
-    compDefAccount: getCompDefAccAddress(PROGRAM_ID, u32FromLE(getCompDefAccOffset("breed"))),
+    compDefAccount: getCompDefAccAddress(PROGRAM_ID, u32FromLE(getCompDefAccOffset(circuit))),
   };
 }
 
@@ -312,7 +314,7 @@ export function useGardenActions(): GardenActions {
           flowerB: flowerPda(player, flowerBIndex),
           experiment,
           offspring,
-          ...arciumAccountsFor(offset),
+          ...arciumAccountsFor("breed", offset),
         })
         .transaction();
 
@@ -375,5 +377,164 @@ export function useGardenActions(): GardenActions {
       fetchFlower: fetchFlowerRecord,
     }),
     [ready, claimStarters, startBreeding, submitEntry, pollBreeding, fetchFlowerRecord],
+  );
+}
+
+// ======================================================================================
+// OPERATOR / AUTHORITY instructions (internal tool, not part of the player surface).
+//
+// These are gated in the UI to the wallet that equals GameConfig.authority. Account
+// derivation mirrors tests/scoring.devnet.ts exactly (proven on devnet cluster 456): the
+// minimal accountsPartial set below is what Anchor cannot resolve from IDL seeds; config,
+// sign_pda_account, pool/clock accounts, system_program and arcium_program self-resolve.
+// ======================================================================================
+
+/** One CompetitionEntry for the operator panel (read model — no PublicKey/BN leakage). */
+export interface OperatorEntry {
+  /** The CompetitionEntry account address (used as the queue_score_entry target). */
+  pubkey: string;
+  player: string;
+  flowerRecord: string;
+  scored: boolean;
+}
+
+export interface OperatorActions {
+  /** True once a wallet + program are connected and operator transactions can be sent. */
+  ready: boolean;
+  /** open_round — opens round (currentRound + 1). Reads the live config for the counter. */
+  openRound: () => Promise<string>;
+  /** close_round — stops new entries on the given round. */
+  closeRound: (roundId: number) => Promise<string>;
+  /** queue_score_entry for ONE entry (separate wallet approval each). */
+  queueScoreEntry: (entryPubkey: string) => Promise<string>;
+  /** queue_reveal_top3 for the round, passing every entry as a remaining account. */
+  queueRevealTop3: (roundId: number) => Promise<string>;
+  /** Fetch all CompetitionEntry accounts for a round (memcmp on the `round` field). */
+  fetchRoundEntries: (roundId: number) => Promise<OperatorEntry[]>;
+}
+
+/**
+ * Hook exposing the four authority-only instructions plus the entry read the score/reveal
+ * flow needs. All web3/anchor/arcium handling stays inside this module, exactly like the
+ * player surface above. UI must only render this when the wallet equals GameConfig.authority.
+ */
+export function useOperatorActions(): OperatorActions {
+  const program = useProgram();
+  const { connection } = useConnection();
+  const { publicKey, sendTransaction } = useWallet();
+
+  const ready = !!program && !!publicKey;
+
+  const send = useCallback<SendFn>(
+    (tx, conn) => sendTransaction(tx, conn),
+    [sendTransaction],
+  );
+
+  const fetchRoundEntries = useCallback(
+    async (roundId: number): Promise<OperatorEntry[]> => {
+      if (!program) return [];
+      const round = roundPda(roundId);
+      const accs = await program.account.competitionEntry.all([
+        { memcmp: { offset: 8, bytes: round.toBase58() } },
+      ]);
+      return accs.map((a) => ({
+        pubkey: a.publicKey.toBase58(),
+        player: a.account.player.toBase58(),
+        flowerRecord: a.account.flowerRecord.toBase58(),
+        scored: a.account.scored,
+      }));
+    },
+    [program],
+  );
+
+  const openRound = useCallback(async (): Promise<string> => {
+    if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
+    // Read the live config counter (never the possibly-stale UI copy) to derive the PDAs.
+    const config = await program.account.gameConfig.fetch(configPda());
+    const current = Number(config.currentRound.toString());
+    const tx = await program.methods
+      .openRound()
+      .accountsPartial({
+        authority: publicKey,
+        config: configPda(),
+        previousRound: current > 0 ? roundPda(current) : null,
+        round: roundPda(current + 1),
+      })
+      .transaction();
+    return sendAndConfirm(send, connection, tx);
+  }, [program, publicKey, connection, send]);
+
+  const closeRound = useCallback(
+    async (roundId: number): Promise<string> => {
+      if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
+      const tx = await program.methods
+        .closeRound()
+        .accountsPartial({ authority: publicKey, round: roundPda(roundId) })
+        .transaction();
+      return sendAndConfirm(send, connection, tx);
+    },
+    [program, publicKey, connection, send],
+  );
+
+  const queueScoreEntry = useCallback(
+    async (entryPubkey: string): Promise<string> => {
+      if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
+      const entry = new PublicKey(entryPubkey);
+      // The entry carries its own round + flower_record; read them rather than trust the UI.
+      const acc = await program.account.competitionEntry.fetch(entry);
+      const offset = new BN(Array.from(randomBytes(8)));
+      const tx = await program.methods
+        .queueScoreEntry(offset)
+        .accountsPartial({
+          authority: publicKey,
+          round: acc.round,
+          entry,
+          flowerRecord: acc.flowerRecord,
+          ...arciumAccountsFor("score_entry", offset),
+        })
+        .transaction();
+      return sendAndConfirm(send, connection, tx);
+    },
+    [program, publicKey, connection, send],
+  );
+
+  const queueRevealTop3 = useCallback(
+    async (roundId: number): Promise<string> => {
+      if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
+      const round = roundPda(roundId);
+      const entries = await program.account.competitionEntry.all([
+        { memcmp: { offset: 8, bytes: round.toBase58() } },
+      ]);
+      const offset = new BN(Array.from(randomBytes(8)));
+      const tx = await program.methods
+        .queueRevealTop3(offset)
+        .accountsPartial({
+          authority: publicKey,
+          round,
+          ...arciumAccountsFor("reveal_top3", offset),
+        })
+        .remainingAccounts(
+          entries.map((e) => ({
+            pubkey: e.publicKey,
+            isWritable: false,
+            isSigner: false,
+          })),
+        )
+        .transaction();
+      return sendAndConfirm(send, connection, tx);
+    },
+    [program, publicKey, connection, send],
+  );
+
+  return useMemo(
+    () => ({
+      ready,
+      openRound,
+      closeRound,
+      queueScoreEntry,
+      queueRevealTop3,
+      fetchRoundEntries,
+    }),
+    [ready, openRound, closeRound, queueScoreEntry, queueRevealTop3, fetchRoundEntries],
   );
 }

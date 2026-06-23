@@ -21,9 +21,11 @@ export function Greenhouse() {
   const { breedError, bloomToast, retryRefresh } = useGame();
 
   return (
-    <div className="flex h-full flex-col gap-3">
-      {/* The night garden: animated scene + planted starters + floating pots. */}
-      <div className="relative min-h-[400px] flex-1 overflow-hidden rounded-xl border border-garden-moss/70 bg-garden-deep/40 shadow-panel">
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      {/* The night garden: animated scene + planted starters + floating pots. A small min-h
+          keeps the scene readable, but flex-1 lets it shrink so the controls strip below
+          always stays fully visible at 100% zoom (1366×768) — no scroll, no cut-off. */}
+      <div className="relative min-h-[200px] flex-1 overflow-hidden rounded-xl border border-garden-moss/70 bg-garden-deep/40 shadow-panel">
         <NightGardenScene />
         <StarterGarden />
 
@@ -39,9 +41,9 @@ export function Greenhouse() {
         </div>
       </div>
 
-      {/* Control dials */}
-      <div className="gh-panel px-3 py-3">
-        <span className="gh-title mb-2 block text-[10px] text-garden-mint/80">Greenhouse Controls</span>
+      {/* Control dials — shrink-0 so the strip is never the element that gets clipped. */}
+      <div className="gh-panel shrink-0 px-3 py-2">
+        <span className="gh-title mb-1.5 block text-[10px] text-garden-mint/80">Greenhouse Controls</span>
         <EnvironmentSelector />
       </div>
 
