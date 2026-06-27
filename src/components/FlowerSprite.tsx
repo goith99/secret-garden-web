@@ -1,11 +1,17 @@
 import type { ReactElement } from "react";
 import type { Flower } from "../types";
+import { GenomeStatus } from "../types";
 import { speciesOf, rarity as rarityStyle, type SpeciesSkin } from "../mocks/presentation";
 import {
   decodeTraitMask,
   paletteFor,
   type HybridPalette,
 } from "../visuals/hybridTraits";
+import {
+  getHybridSVG,
+  maskToClasses,
+  getHybridDescription,
+} from "../visuals/hybridSvg";
 
 /**
  * PLACEHOLDER SPRITES. Pure-SVG flowers standing in for future pixel-art assets.
@@ -346,7 +352,25 @@ export function FlowerSprite({
   const accent = rarityStyle(flower.rarity).dot;
   const isHybrid = flower.visualSpeciesId === 255;
 
+  // Revealed hybrid: the encrypted genome has unsealed at least one trait slot, so we
+  // render the deterministic 625-combination artwork from the on-chain revealed_trait_mask
+  // (one of 5 petal × 5 color × 5 leaf × 5 stem). The SVG string is produced by the shared
+  // hybrid visual system and injected on a px-sized div, matching the other sprite footprints.
+  if (flower.genomeStatus === GenomeStatus.Encrypted && flower.revealedTraitMask !== 0) {
+    const classes = maskToClasses(flower.revealedTraitMask);
+    return (
+      <div
+        role="img"
+        aria-label={getHybridDescription(classes)}
+        className={sway ? "animate-sway origin-bottom" : "origin-bottom"}
+        style={{ width: px, height: px }}
+        dangerouslySetInnerHTML={{ __html: getHybridSVG(classes) }}
+      />
+    );
+  }
+
   // Hybrid: compose stem/leaf/petals from the on-chain mask classes (Stage 3C).
+  // With revealed_trait_mask === 0 (genome still fully sealed) this is the placeholder bloom.
   if (isHybrid) {
     const classes = decodeTraitMask(flower.revealedTraitMask);
     const palette = paletteFor(classes.color);
