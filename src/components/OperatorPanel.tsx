@@ -29,6 +29,7 @@ function errText(e: unknown): string {
   if (e instanceof TxError) {
     if (e.kind === "rejected") return "Transaction cancelled in wallet.";
     if (e.kind === "insufficient") return "Not enough SOL to pay transaction fees.";
+    if (e.kind === "network") return e.message;
   }
   return e instanceof Error ? e.message : String(e);
 }

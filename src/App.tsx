@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { AppWalletProvider } from "./wallet/WalletProvider";
+import { NetworkGuardProvider, useNetworkGuard } from "./wallet/useNetworkGuard";
 import { useGardener } from "./wallet/useGardener";
+import { SwitchNetworkScreen } from "./screens/SwitchNetworkScreen";
 import { GameProvider } from "./game/GameContext";
 import { useGardenData, NO_ACTIVE_ROUND } from "./hooks/useGardenData";
 import { useMediaQuery } from "./hooks/useMediaQuery";
@@ -51,6 +53,9 @@ function ConnectedApp() {
 
 function Gate() {
   const { connected } = useGardener();
+  // Once a transaction reveals the wallet is on the wrong network, the game is replaced by the
+  // Switch-to-Devnet screen until the player switches and presses Check Again (see the guard).
+  const { wrongNetwork } = useNetworkGuard();
   // Show the How to Play guide once per wallet connection — every false→true transition
   // (a fresh connect, or a disconnect + reconnect). No localStorage by design (per spec).
   const [showHowToPlay, setShowHowToPlay] = useState(false);
@@ -62,9 +67,10 @@ function Gate() {
     prevConnected.current = connected;
   }, [connected]);
 
+  const connectedView = wrongNetwork ? <SwitchNetworkScreen /> : <ConnectedApp />;
   return (
     <>
-      {connected ? <ConnectedApp /> : <DisconnectedScreen />}
+      {connected ? connectedView : <DisconnectedScreen />}
       {showHowToPlay && <HowToPlayModal onClose={() => setShowHowToPlay(false)} />}
     </>
   );
@@ -73,7 +79,9 @@ function Gate() {
 export default function App() {
   return (
     <AppWalletProvider>
-      <Gate />
+      <NetworkGuardProvider>
+        <Gate />
+      </NetworkGuardProvider>
     </AppWalletProvider>
   );
 }

@@ -312,6 +312,8 @@ export function GameProvider({
         } else {
           if (e instanceof TxError && e.kind === "insufficient") {
             setBreedError(INSUFFICIENT_SOL_MSG);
+          } else if (e instanceof TxError && e.kind === "network") {
+            setBreedError(e.message);
           }
           setActivePhase("Failed");
         }

@@ -44,6 +44,7 @@ import {
   getCompDefAccOffset,
 } from "@arcium-hq/client";
 import { useProgram, type SecretGardenProgram } from "./client";
+import { useNetworkGuard } from "../wallet/useNetworkGuard";
 import {
   PROGRAM_ID,
   configPda,
@@ -76,7 +77,7 @@ function u32FromLE(bytes: Uint8Array): number {
 }
 
 // ---- player-vocabulary error classification ------------------------------------------
-export type TxErrorKind = "rejected" | "insufficient" | "failed";
+export type TxErrorKind = "rejected" | "insufficient" | "failed" | "network";
 
 /** A transaction error already reduced to a player-facing category (never a raw RPC dump). */
 export class TxError extends Error {
@@ -107,6 +108,18 @@ function classifyError(e: unknown): TxError {
     lower.includes("canceled")
   ) {
     return new TxError("rejected", msg);
+  }
+  // Wrong network: a devnet tx submitted to another cluster (common with wallets the dApp
+  // can't pin to devnet, e.g. Phantom) can't find the devnet blockhash or the program account.
+  // Flag it so the network guard can take over the screen and prompt a switch to Devnet.
+  if (
+    lower.includes("blockhash not found") ||
+    lower.includes("blockhashnotfound") ||
+    lower.includes("program that does not exist") ||
+    lower.includes("programaccountnotfound") ||
+    lower.includes("invalid program for execution")
+  ) {
+    return new TxError("network", "Make sure your wallet is set to Devnet and try again.");
   }
   // Not enough SOL to pay fees / rent for the new accounts.
   if (
@@ -226,12 +239,27 @@ export function useGardenActions(): GardenActions {
   const program = useProgram();
   const { connection } = useConnection();
   const { publicKey, sendTransaction } = useWallet();
+  const { reportWrongNetwork } = useNetworkGuard();
 
   const ready = !!program && !!publicKey;
 
   const send = useCallback<SendFn>(
     (tx, conn) => sendTransaction(tx, conn),
     [sendTransaction],
+  );
+
+  // Single send choke point: a "network" failure tells the guard the wallet is on the wrong
+  // cluster (so the app can swap to the Switch-to-Devnet screen) before the error propagates.
+  const submit = useCallback(
+    async (tx: Transaction): Promise<string> => {
+      try {
+        return await sendAndConfirm(send, connection, tx);
+      } catch (e) {
+        if (e instanceof TxError && e.kind === "network") reportWrongNetwork();
+        throw e;
+      }
+    },
+    [send, connection, reportWrongNetwork],
   );
 
   const claimStarters = useCallback(async (): Promise<string> => {
@@ -250,7 +278,7 @@ export function useGardenActions(): GardenActions {
         .createProfile()
         .accountsPartial({ owner, config: configPda(), profile })
         .transaction();
-      await sendAndConfirm(send, connection, createTx);
+      await submit(createTx);
     }
 
     const tx = await program.methods
@@ -267,8 +295,8 @@ export function useGardenActions(): GardenActions {
         flower5: flowerPda(owner, 5),
       })
       .transaction();
-    return sendAndConfirm(send, connection, tx);
-  }, [program, publicKey, connection, send]);
+    return submit(tx);
+  }, [program, publicKey, submit]);
 
   const startBreeding = useCallback(
     async ({
@@ -334,10 +362,10 @@ export function useGardenActions(): GardenActions {
         })
         .transaction();
 
-      const signature = await sendAndConfirm(send, connection, tx);
+      const signature = await submit(tx);
       return { experiment, signature, offspringIndex: profile.nextFlowerIndex };
     },
-    [program, publicKey, connection, send],
+    [program, publicKey, submit],
   );
 
   const submitEntry = useCallback(
@@ -362,9 +390,9 @@ export function useGardenActions(): GardenActions {
           entry: entryPda(round, player),
         })
         .transaction();
-      return sendAndConfirm(send, connection, tx);
+      return submit(tx);
     },
-    [program, publicKey, connection, send],
+    [program, publicKey, submit],
   );
 
   const pollBreeding = useCallback(
@@ -438,12 +466,26 @@ export function useOperatorActions(): OperatorActions {
   const program = useProgram();
   const { connection } = useConnection();
   const { publicKey, sendTransaction } = useWallet();
+  const { reportWrongNetwork } = useNetworkGuard();
 
   const ready = !!program && !!publicKey;
 
   const send = useCallback<SendFn>(
     (tx, conn) => sendTransaction(tx, conn),
     [sendTransaction],
+  );
+
+  // Same wrong-network choke point as the player surface (see useGardenActions.submit).
+  const submit = useCallback(
+    async (tx: Transaction): Promise<string> => {
+      try {
+        return await sendAndConfirm(send, connection, tx);
+      } catch (e) {
+        if (e instanceof TxError && e.kind === "network") reportWrongNetwork();
+        throw e;
+      }
+    },
+    [send, connection, reportWrongNetwork],
   );
 
   const fetchRoundEntries = useCallback(
@@ -477,8 +519,8 @@ export function useOperatorActions(): OperatorActions {
         round: roundPda(current + 1),
       })
       .transaction();
-    return sendAndConfirm(send, connection, tx);
-  }, [program, publicKey, connection, send]);
+    return submit(tx);
+  }, [program, publicKey, submit]);
 
   const closeRound = useCallback(
     async (roundId: number): Promise<string> => {
@@ -487,9 +529,9 @@ export function useOperatorActions(): OperatorActions {
         .closeRound()
         .accountsPartial({ authority: publicKey, round: roundPda(roundId) })
         .transaction();
-      return sendAndConfirm(send, connection, tx);
+      return submit(tx);
     },
-    [program, publicKey, connection, send],
+    [program, publicKey, submit],
   );
 
   const queueScoreEntry = useCallback(
@@ -509,9 +551,9 @@ export function useOperatorActions(): OperatorActions {
           ...arciumAccountsFor("score_entry", offset),
         })
         .transaction();
-      return sendAndConfirm(send, connection, tx);
+      return submit(tx);
     },
-    [program, publicKey, connection, send],
+    [program, publicKey, submit],
   );
 
   const queueRevealTop3 = useCallback(
@@ -537,9 +579,9 @@ export function useOperatorActions(): OperatorActions {
           })),
         )
         .transaction();
-      return sendAndConfirm(send, connection, tx);
+      return submit(tx);
     },
-    [program, publicKey, connection, send],
+    [program, publicKey, submit],
   );
 
   return useMemo(

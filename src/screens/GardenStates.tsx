@@ -55,6 +55,8 @@ export function GardenEmpty({ onRefresh }: { onRefresh: () => void }) {
           setProblem(
             "Your garden needs a little more SOL to grow. Add funds and try again.",
           );
+        } else if (e.kind === "network") {
+          setProblem(e.message);
         } else if (e.kind !== "rejected") {
           setProblem("Something went wrong. Try again.");
         }
