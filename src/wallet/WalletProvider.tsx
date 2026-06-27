@@ -3,9 +3,11 @@
  * here so UI components never import wallet-adapter directly — Stage 6C will add the RPC
  * connection / data-fetching providers around the same tree without touching components.
  *
- * Network is pinned to Solana DEVNET explicitly so Phantom/Solflare never reach for
- * mainnet. The RPC endpoint is the PUBLIC devnet node — the Helius key is server-side
- * only and must never enter the browser bundle. Stage 6C will move this to an env var.
+ * Network is pinned to Solana DEVNET. The app's own RPC endpoint is the PUBLIC devnet node
+ * (the Helius key is server-side only and must never enter the browser bundle; Stage 6C will
+ * move this to an env var). Each adapter that accepts a `network` option is ALSO pinned so it
+ * submits to devnet — but not every wallet exposes one (see below), so a send-time network
+ * guard (useNetworkGuard) backstops the wallets that can't be pinned.
  */
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 import {
@@ -23,8 +25,17 @@ const NETWORK = WalletAdapterNetwork.Devnet;
 export function AppWalletProvider({ children }: { children: ReactNode }) {
   const endpoint = useMemo(() => clusterApiUrl(NETWORK), []);
 
-  // Adapters are instantiated once. Solflare is told the network so its in-wallet UX
-  // defaults to devnet; Phantom follows the ConnectionProvider endpoint.
+  // Adapters are instantiated once.
+  //
+  // Solflare's constructor accepts a `network`, so we pin it to devnet — it then submits to
+  // devnet and never trips the network guard.
+  //
+  // PhantomWalletAdapter's constructor takes NO network option (verified in
+  // node_modules/@solana/wallet-adapter-phantom): Phantom submits via its own provider on
+  // whatever cluster the user selected in the extension, which the dApp cannot override. We
+  // therefore leave it as-is and rely on the send-time network guard (useNetworkGuard) to
+  // detect a wrong-network submission and prompt the player to switch to Devnet. Any future
+  // adapter that DOES accept `{ network }` should be pinned here like Solflare.
   const wallets = useMemo(
     () => [
       new PhantomWalletAdapter(),
