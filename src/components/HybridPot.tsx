@@ -166,14 +166,9 @@ export function HybridPot() {
               </span>
             </div>
           ) : confirming ? (
-            <>
-              <span className="animate-pulseSoft text-3xl" aria-hidden>
-                ✍️
-              </span>
-              <span className="mt-2 max-w-[7rem] font-pixel text-[10px] uppercase leading-tight tracking-wide text-garden-cyan">
-                Waiting for approval…
-              </span>
-            </>
+            <span className="max-w-[7rem] animate-pulseSoft font-pixel text-[10px] uppercase leading-tight tracking-wide text-garden-cyan">
+              Waiting for approval…
+            </span>
           ) : growing ? (
             <>
               <span className="animate-spin text-3xl drop-shadow-[0_0_8px_rgba(108,199,207,0.6)]" aria-hidden>

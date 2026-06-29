@@ -359,10 +359,15 @@ export function FlowerSprite({
   if (flower.genomeStatus === GenomeStatus.Encrypted && flower.revealedTraitMask !== 0) {
     const classes = maskToClasses(flower.revealedTraitMask);
     return (
+      // The injected SVG (getHybridSVG) carries a viewBox but no width/height, so it would
+      // otherwise default to the browser's replaced-element size (~300×150) and overflow the
+      // pot. Force it to fill this px-sized box and clip anything past it.
       <div
         role="img"
         aria-label={getHybridDescription(classes)}
-        className={sway ? "animate-sway origin-bottom" : "origin-bottom"}
+        className={`overflow-hidden [&>svg]:block [&>svg]:h-full [&>svg]:w-full ${
+          sway ? "animate-sway origin-bottom" : "origin-bottom"
+        }`}
         style={{ width: px, height: px }}
         dangerouslySetInnerHTML={{ __html: getHybridSVG(classes) }}
       />
