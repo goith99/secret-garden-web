@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AppWalletProvider } from "./wallet/WalletProvider";
 import { NetworkGuardProvider, useNetworkGuard } from "./wallet/useNetworkGuard";
+import { ConnectWalletProvider } from "./wallet/ConnectWalletContext";
 import { useGardener } from "./wallet/useGardener";
 import { SwitchNetworkScreen } from "./screens/SwitchNetworkScreen";
 import { GameProvider } from "./game/GameContext";
@@ -8,21 +9,23 @@ import { useGardenData, NO_ACTIVE_ROUND } from "./hooks/useGardenData";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { DesktopLayout } from "./layouts/DesktopLayout";
 import { MobileLayout } from "./layouts/MobileLayout";
-import { DisconnectedScreen } from "./screens/DisconnectedScreen";
 import { GardenEmpty, GardenError, GardenLoading } from "./screens/GardenStates";
 import { HowToPlayModal } from "./components/HowToPlayModal";
+import { MOCK_STARTERS } from "./mocks/data";
 
 /**
- * Root. Stage 6C: behind the Stage 6B wallet gate, real on-chain devnet data drives the
- * game. The connected app reads the player's garden (config, profile, flowers, round) and
- * feeds the mapped UI data into <GameProvider>; the existing layouts/components are
- * unchanged — they consume it through useGame(). Transactions are still mocked (Stage 6D).
+ * Root. The 3-column game is ALWAYS visible — connected or not. A disconnected visitor sees the
+ * night garden, the starter flowers, and public round info; the actions that need a wallet (the
+ * Hybrid Pot's breed, a flower's Submit to Challenge) raise the ConnectWalletModal instead of
+ * blocking the whole screen. Once connected, real on-chain devnet data drives the player's own
+ * garden (config, profile, flowers, round) and the real transactions take over.
  */
 function GameView() {
   const isMobile = useMediaQuery("(max-width: 1023px)");
   return isMobile ? <MobileLayout /> : <DesktopLayout />;
 }
 
+/** Connected player: their real garden, with the loading / error / claim gates intact. */
 function ConnectedApp() {
   const { flowers, journal, activeRound, playerProfile, gameConfig, loading, error, refetch } =
     useGardenData();
@@ -43,8 +46,32 @@ function ConnectedApp() {
         challenge: activeRound ?? NO_ACTIVE_ROUND,
         winners: [], // revealed winners arrive with scoring (not yet on devnet) — see notes
         authority: gameConfig?.authority ?? null, // gates the hidden operator panel
+        breedsThisRound: playerProfile.breedsThisRound,
+        lastBreedRound: playerProfile.lastBreedRound,
       }}
       onRefetch={refetch}
+    >
+      <GameView />
+    </GameProvider>
+  );
+}
+
+/**
+ * Disconnected visitor: the same layout, fed PUBLIC round data plus visual starter flowers.
+ * No `onRefetch`, so breeding stays inert — the Hybrid Pot raises the connect prompt instead.
+ */
+function DisconnectedApp() {
+  const { activeRound } = useGardenData();
+
+  return (
+    <GameProvider
+      initial={{
+        flowers: MOCK_STARTERS,
+        journal: [],
+        challenge: activeRound ?? NO_ACTIVE_ROUND,
+        winners: [], // revealed winners arrive with scoring (not yet on devnet)
+        authority: null,
+      }}
     >
       <GameView />
     </GameProvider>
@@ -67,10 +94,14 @@ function Gate() {
     prevConnected.current = connected;
   }, [connected]);
 
-  const connectedView = wrongNetwork ? <SwitchNetworkScreen /> : <ConnectedApp />;
+  let view;
+  if (!connected) view = <DisconnectedApp />;
+  else if (wrongNetwork) view = <SwitchNetworkScreen />;
+  else view = <ConnectedApp />;
+
   return (
     <>
-      {connected ? connectedView : <DisconnectedScreen />}
+      {view}
       {showHowToPlay && <HowToPlayModal onClose={() => setShowHowToPlay(false)} />}
     </>
   );
@@ -80,7 +111,9 @@ export default function App() {
   return (
     <AppWalletProvider>
       <NetworkGuardProvider>
-        <Gate />
+        <ConnectWalletProvider>
+          <Gate />
+        </ConnectWalletProvider>
       </NetworkGuardProvider>
     </AppWalletProvider>
   );

@@ -72,7 +72,13 @@ export interface GardenInitial {
   winners: DailyWinner[];
   /** GameConfig.authority (program operator). Drives the hidden operator panel gate. */
   authority?: string | null;
+  /** Breeding attempts used this round + the round they counted toward (from PlayerProfile). */
+  breedsThisRound?: number;
+  lastBreedRound?: number;
 }
+
+/** Per-round breeding cap enforced on-chain (MAX_BREEDS_PER_ROUND). */
+export const MAX_BREEDS_PER_ROUND = 5;
 
 interface GameContextValue {
   shelf: Flower[];
@@ -88,6 +94,8 @@ interface GameContextValue {
   newBloom: Flower | null;
   /** True when a competition round is currently Open (drives the bloom's submit button). */
   roundOpen: boolean;
+  /** How many crosses the player can still start this round (5 when standalone/no profile). */
+  breedsRemaining: number;
   /** Player-vocabulary breeding problem (e.g. low SOL) shown under the crossbreed CTA. */
   breedError: string | null;
   journal: JournalEntry[];
@@ -174,6 +182,16 @@ export function GameProvider({
   const winners = initial?.winners ?? MOCK_WINNERS;
   const roundOpen = challenge.roundId > 0 && challenge.status === RoundStatus.Open;
   const authority = initial?.authority ?? null;
+
+  // Breeds remaining this round. The on-chain counter is stale once the round advances:
+  // it only applies when the player last bred in the CURRENT round; otherwise the cap is
+  // full again. No profile (standalone/disconnected) → full cap, so the hint stays quiet.
+  const breedsThisRound = initial?.breedsThisRound ?? 0;
+  const lastBreedRound = initial?.lastBreedRound ?? 0;
+  const breedsRemaining =
+    lastBreedRound === challenge.roundId
+      ? Math.max(0, MAX_BREEDS_PER_ROUND - breedsThisRound)
+      : MAX_BREEDS_PER_ROUND;
   const refetchGarden = useCallback(
     (): Promise<boolean> => (onRefetch ? onRefetch() : Promise.resolve(false)),
     [onRefetch],
@@ -261,6 +279,9 @@ export function GameProvider({
   // When `onRefetch` is absent (standalone/demo with mocks) it walks a short timed cycle.
   const startCrossbreed = useCallback(() => {
     if (!bothPotsFilled || activePhase || !potA || !potB) return;
+    // Real mode only: the per-round breed cap is enforced on-chain; don't even build the tx
+    // once it's spent (the Hybrid Pot shows the "come back next round" message instead).
+    if (onRefetch && breedsRemaining <= 0) return;
     clearTimers();
     setBreedError(null);
     setNewBloom(null);
@@ -319,7 +340,7 @@ export function GameProvider({
         }
       }
     })();
-  }, [bothPotsFilled, activePhase, potA, potB, environment, actions, onRefetch, clearTimers]);
+  }, [bothPotsFilled, activePhase, potA, potB, environment, actions, onRefetch, clearTimers, breedsRemaining]);
 
   // Real mode: the hybrid is already on-chain. Reset to idle immediately so the player can
   // keep playing, then refetch to reveal it. A refetch failure NEVER tears down the game
@@ -480,6 +501,7 @@ export function GameProvider({
       isCycling,
       newBloom,
       roundOpen,
+      breedsRemaining,
       breedError,
       journal,
       challenge,
@@ -506,7 +528,7 @@ export function GameProvider({
     }),
     [
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
-      newBloom, roundOpen, breedError, journal, challenge, winners, activeTab, submittingId,
+      newBloom, roundOpen, breedsRemaining, breedError, journal, challenge, winners, activeTab, submittingId,
       bloomToast, authority, refetchGarden, selectFlower, placeInPot, autoPlace, clearPot,
       setEnvironment, startCrossbreed, collectBloom, submitBloom, resetAfterFailure, canSubmit,
       submitFlower, retryRefresh, simulateFailure,

@@ -1,5 +1,6 @@
 import type { Flower } from "../types";
 import { useGame } from "../game/GameContext";
+import { useGardener } from "../wallet/useGardener";
 import { isHybrid } from "../program/accounts";
 import { FlowerShelf } from "./FlowerShelf";
 import { Badge } from "./Badge";
@@ -20,6 +21,7 @@ export function HybridCollection({
   variant: "desktop" | "mobile";
 }) {
   const { shelf } = useGame();
+  const { connected } = useGardener();
   const hybrids = shelf.filter(isHybrid);
   const desktop = variant === "desktop";
 
@@ -32,7 +34,11 @@ export function HybridCollection({
         </Badge>
       </div>
       <div className={desktop ? "gh-scroll -mr-1 min-h-0 flex-1 overflow-y-auto pb-1 pr-1" : ""}>
-        {hybrids.length === 0 ? (
+        {!connected ? (
+          <p className="px-1 py-6 text-center font-pixel text-[9px] uppercase leading-relaxed tracking-wide text-garden-parch/40">
+            Connect your wallet to see your collection
+          </p>
+        ) : hybrids.length === 0 ? (
           <p className="px-1 py-6 text-center font-pixel text-[9px] uppercase leading-relaxed tracking-wide text-garden-parch/40">
             No blooms yet — cross two flowers in the greenhouse to grow one.
           </p>

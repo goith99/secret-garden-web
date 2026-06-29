@@ -18,7 +18,12 @@ import { useGame } from "../game/GameContext";
  * they never grow the column height.
  */
 export function Greenhouse() {
-  const { breedError, bloomToast, retryRefresh } = useGame();
+  const { breedError, bloomToast, retryRefresh, breedsRemaining } = useGame();
+
+  // Informational only: stays quiet at a full cap (5), counts down as breeds are spent, and
+  // turns to a gentle amber warning once they're gone. Player vocabulary — no on-chain terms.
+  const showBreedsLeft = breedsRemaining < 5;
+  const breedsSpent = breedsRemaining <= 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -40,6 +45,19 @@ export function Greenhouse() {
           </div>
         </div>
       </div>
+
+      {/* Breeds remaining this round — small, informational, below the pot area. */}
+      {showBreedsLeft && (
+        <p
+          className={`shrink-0 text-center font-pixel text-[9px] uppercase tracking-wide ${
+            breedsSpent ? "text-garden-gold" : "text-garden-parch/40"
+          }`}
+        >
+          {breedsSpent
+            ? "No breeds remaining this round"
+            : `${breedsRemaining} of 5 breeds remaining this round`}
+        </p>
+      )}
 
       {/* Control dials — shrink-0 so the strip is never the element that gets clipped. */}
       <div className="gh-panel shrink-0 px-3 py-2">

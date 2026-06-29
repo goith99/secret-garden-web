@@ -1,8 +1,13 @@
-import type { KeyboardEvent } from "react";
+import { useState, type KeyboardEvent } from "react";
 import type { Flower } from "../types";
 import { FlowerStatus, GenomeStatus } from "../types";
 import { useGame } from "../game/GameContext";
+import { useGardener } from "../wallet/useGardener";
+import { useConnectWallet } from "../wallet/ConnectWalletContext";
 import { FlowerSprite } from "./FlowerSprite";
+
+const BREEDS_SPENT_MSG =
+  "You've used all your breeds for this round. Come back next round!";
 
 /**
  * The Hybrid Pot — the focal point AND the crossbreed action (Stage 6D). Clicking the pot
@@ -47,8 +52,13 @@ export function HybridPot() {
     resetAfterFailure,
     newBloom,
     roundOpen,
+    breedsRemaining,
     submittingId,
   } = useGame();
+  const { connected } = useGardener();
+  const { requestConnect } = useConnectWallet();
+  // Inline "no breeds left" note, shown when an exhausted player clicks to cross.
+  const [showSpentMsg, setShowSpentMsg] = useState(false);
 
   const ready = phase === "Ready"; // both pots filled, idle — armed to cross
   const growing = isCycling;
@@ -56,17 +66,36 @@ export function HybridPot() {
   const failed = phase === "Failed";
   const oneFilled = (potA === null) !== (potB === null); // exactly one pot has a flower
   const submitting = submittingId !== null;
+  const exhausted = breedsRemaining <= 0; // per-round breed cap spent (connected/real mode)
+  // The gold "Crossbreed" affordance only when a connected player can actually cross now.
+  const armed = ready && connected && !exhausted;
 
-  // The pot is clickable to start a cross or to clear a failure — never at BloomReady, where
-  // the buttons below own the action.
-  const onActivate = ready ? startCrossbreed : failed ? resetAfterFailure : null;
-  const interactive = onActivate !== null;
+  // What a click does, by state. Disconnected → prompt to connect (the game stays visible);
+  // exhausted → show the "come back next round" note; otherwise cross / clear a failure.
+  const onActivate = () => {
+    if (!connected) {
+      requestConnect();
+      return;
+    }
+    if (ready) {
+      if (exhausted) {
+        setShowSpentMsg(true);
+        return;
+      }
+      startCrossbreed();
+    } else if (failed) {
+      resetAfterFailure();
+    }
+  };
+  // Clickable whenever a click has a meaning: connect prompt, arm/cross, exhausted note, or
+  // clearing a failure. (Never at BloomReady — the buttons below own that.)
+  const interactive = !bloomed && (!connected || ready || failed);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (!interactive) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      onActivate?.();
+      onActivate();
     }
   };
 
@@ -74,31 +103,35 @@ export function HybridPot() {
     <div className="flex flex-col items-center gap-2">
       <span className="gh-title text-[11px] text-garden-gold">Hybrid Pot</span>
       <div
-        onClick={interactive ? () => onActivate?.() : undefined}
+        onClick={interactive ? onActivate : undefined}
         onKeyDown={onKeyDown}
         role={interactive ? "button" : undefined}
         tabIndex={interactive ? 0 : undefined}
         aria-label={
-          ready
-            ? "Crossbreed the two flowers"
-            : failed
-              ? "Bloom failed — try again"
-              : bloomed
-                ? "Your new bloom is ready"
-                : undefined
+          !connected
+            ? "Connect your wallet to start breeding"
+            : armed
+              ? "Crossbreed the two flowers"
+              : ready && exhausted
+                ? "No breeds remaining this round"
+                : failed
+                  ? "Bloom failed — try again"
+                  : bloomed
+                    ? "Your new bloom is ready"
+                    : undefined
         }
         className={`relative flex h-32 w-32 items-end justify-center rounded-3xl border-2 outline-none transition md:h-40 md:w-40 xl:h-48 xl:w-48
           focus-visible:ring-2 focus-visible:ring-garden-cyan
           ${interactive ? "cursor-pointer" : ""}
-          ${ready ? "animate-pulseSoft border-garden-gold bg-garden-gold/15 hover:bg-garden-gold/25" : ""}
+          ${armed ? "animate-pulseSoft border-garden-gold bg-garden-gold/15 hover:bg-garden-gold/25" : ""}
           ${bloomed ? "border-garden-gold bg-garden-gold/10" : ""}
           ${failed ? "border-garden-rose bg-garden-rose/10 hover:bg-garden-rose/15" : ""}
-          ${!ready && !bloomed && !failed ? "border-garden-moss bg-garden-deep/50" : ""}`}
+          ${!armed && !bloomed && !failed ? "border-garden-moss bg-garden-deep/50" : ""}`}
       >
         {/* halo */}
         <div
           className={`pointer-events-none absolute inset-0 rounded-3xl transition
-            ${bloomed ? "shadow-[0_0_50px_rgba(230,194,92,0.5)]" : ready ? "shadow-[0_0_40px_rgba(230,194,92,0.4)]" : growing ? "animate-pulseSoft shadow-[0_0_34px_rgba(108,199,207,0.4)]" : ""}`}
+            ${bloomed ? "shadow-[0_0_50px_rgba(230,194,92,0.5)]" : armed ? "shadow-[0_0_40px_rgba(230,194,92,0.4)]" : growing ? "animate-pulseSoft shadow-[0_0_34px_rgba(108,199,207,0.4)]" : ""}`}
         />
         {/* pot vessel */}
         <div className="absolute bottom-2 h-12 w-24 rounded-b-3xl rounded-t-md bg-gradient-to-b from-garden-moss to-garden-green shadow-pot md:h-14 md:w-28 xl:w-32" />
@@ -132,13 +165,31 @@ export function HybridPot() {
                 Growing…
               </span>
             </>
-          ) : ready ? (
+          ) : !connected ? (
+            <>
+              <span className="text-2xl" aria-hidden>
+                🌱
+              </span>
+              <span className="mt-1 max-w-[7rem] font-pixel text-[10px] uppercase leading-tight tracking-wide text-garden-mint/80">
+                Connect wallet to start breeding
+              </span>
+            </>
+          ) : armed ? (
             <>
               <span className="text-2xl drop-shadow-[0_0_8px_rgba(230,194,92,0.6)]" aria-hidden>
                 ✦
               </span>
               <span className="mt-1 font-pixel text-[12px] uppercase tracking-[0.14em] text-garden-gold">
                 Crossbreed
+              </span>
+            </>
+          ) : ready && exhausted ? (
+            <>
+              <span className="font-pixel text-[10px] uppercase tracking-wide text-garden-gold/80">
+                No breeds left
+              </span>
+              <span className="mt-1 font-pixel text-[9px] uppercase tracking-wide text-garden-parch/40">
+                Come back next round
               </span>
             </>
           ) : (
@@ -153,6 +204,13 @@ export function HybridPot() {
           )}
         </div>
       </div>
+
+      {/* "You've used all your breeds…" — shown when an exhausted player clicks to cross. */}
+      {showSpentMsg && exhausted && ready && (
+        <p className="max-w-[15rem] text-center font-body text-xs leading-snug text-garden-gold">
+          {BREEDS_SPENT_MSG}
+        </p>
+      )}
 
       {/* BloomReady actions — Submit (if a round is open) + Save. Player vocabulary only. */}
       {bloomed && (

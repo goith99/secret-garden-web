@@ -50,6 +50,10 @@ export interface GardenProfile {
   nextFlowerIndex: number;
   totalExperiments: number;
   createdAt: number;
+  /** `start_breeding` attempts used in the round identified by `lastBreedRound`. */
+  breedsThisRound: number;
+  /** The round the player last bred in; when it differs from the live round, breedsThisRound is stale. */
+  lastBreedRound: number;
 }
 
 // ---- seed helpers (Uint8Array, no Buffer dependency) ---------------------------------
@@ -117,6 +121,8 @@ function mapProfile(p: RawProfile): GardenProfile {
     nextFlowerIndex: p.nextFlowerIndex,
     totalExperiments: p.totalExperiments,
     createdAt: p.createdAt.toNumber(),
+    breedsThisRound: p.breedsThisRound,
+    lastBreedRound: p.lastBreedRound,
   };
 }
 
