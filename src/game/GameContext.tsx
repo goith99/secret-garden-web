@@ -381,8 +381,11 @@ export function GameProvider({
       } catch (e) {
         if (!mounted.current) return;
         if (e instanceof TxError && e.kind === "rejected") {
-          // Declined: keep the flowers in the pots, drop back to Ready, show a fading note.
+          // Declined: empty both pots back to "Drop a flower" (a half-placed hybrid otherwise
+          // lingers) and show a fading "Breeding cancelled." note.
           setActivePhase(null);
+          setPotA(null);
+          setPotB(null);
           setBreedNotice("Breeding cancelled.");
         } else {
           if (e instanceof TxError && e.kind === "insufficient") {
