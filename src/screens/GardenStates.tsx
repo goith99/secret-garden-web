@@ -5,6 +5,7 @@
  */
 import { useState, type ReactNode } from "react";
 import { PlayerButton } from "../components/PlayerButton";
+import { useToast } from "../components/Toast";
 import { useGardenActions, TxError } from "../program/transactions";
 
 function Centered({ children }: { children: ReactNode }) {
@@ -32,41 +33,78 @@ export function GardenLoading() {
   );
 }
 
+/** Button labels for the two setup steps; idle label depends on whether only the claim is left. */
+const STEP_LABEL = {
+  creating: "Setting up your garden… (1 of 2)",
+  claiming: "Claiming your flowers… (2 of 2)",
+} as const;
+
 /**
- * A connected wallet that has never claimed starters (no PlayerProfile on-chain). The
- * "Claim Your Starter Flowers" button sends the real claim_starters transaction (Stage 6D)
- * and, on success, refetches so the garden loads with the six new flowers.
+ * A connected wallet with no garden yet (no PlayerProfile, or one without starters). Setup is
+ * TWO confirmed transactions — create_profile (1 of 2) then claim_starters (2 of 2) — so the
+ * button reports which step it's on. If the profile gets created but the claim is declined, the
+ * retry only re-runs the claim (the profile already exists on-chain). Success raises a toast and
+ * refetches so the garden loads with the six new flowers.
  */
 export function GardenEmpty({ onRefresh }: { onRefresh: () => void }) {
-  const { claimStarters, ready } = useGardenActions();
-  const [claiming, setClaiming] = useState(false);
+  const { createProfile, claimStarters, ready } = useGardenActions();
+  const toast = useToast();
+  const [busy, setBusy] = useState<"idle" | "creating" | "claiming">("idle");
+  // Once the profile exists (step 1 done), a retry should skip straight to claiming.
+  const [claimOnly, setClaimOnly] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
-  const onClaim = async () => {
+  const onSetup = async () => {
     setProblem(null);
-    setClaiming(true);
+    // Track the step in a local — state updates aren't visible to this closure after an await.
+    let step: "create" | "claim" = claimOnly ? "claim" : "create";
     try {
+      if (!claimOnly) {
+        setBusy("creating");
+        await createProfile();
+      }
+      step = "claim";
+      setBusy("claiming");
       await claimStarters();
+      toast.success(
+        claimOnly
+          ? "6 starter flowers claimed! Start breeding. 🌺"
+          : "Welcome to Secret Garden! 🌸 Your 6 starter flowers are ready.",
+      );
       onRefresh(); // reload real data — the garden now has 6 starters
     } catch (e) {
-      // Wallet declined → silently return; on-chain/funds problems → a player-vocabulary line.
-      if (e instanceof TxError) {
-        if (e.kind === "insufficient") {
-          setProblem(
-            "Your garden needs a little more SOL to grow. Add funds and try again.",
-          );
-        } else if (e.kind === "network") {
-          setProblem(e.message);
-        } else if (e.kind !== "rejected") {
-          setProblem("Something went wrong. Try again.");
+      const kind = e instanceof TxError ? e.kind : "failed";
+      if (kind === "rejected") {
+        if (step === "create") {
+          setProblem("Setup cancelled. Tap to try again.");
+        } else if (claimOnly) {
+          // A claim-only retry that's declined again: re-enable, no error (their choice).
+          setProblem(null);
+        } else {
+          // Profile created, claim declined → retry should claim only.
+          setClaimOnly(true);
+          setProblem("Your garden is ready but flowers couldn't be claimed. Tap to claim them.");
         }
+      } else if (kind === "insufficient") {
+        setProblem("Your garden needs a little more SOL to grow. Add funds and try again.");
+      } else if (kind === "network") {
+        setProblem(e instanceof TxError ? e.message : "Something went wrong. Check your connection and try again.");
+      } else if (claimOnly) {
+        toast.error("Couldn't claim flowers. Try again.");
       } else {
-        setProblem("Something went wrong. Try again.");
+        setProblem("Something went wrong. Check your connection and try again.");
       }
     } finally {
-      setClaiming(false);
+      setBusy("idle");
     }
   };
+
+  const label =
+    busy !== "idle"
+      ? STEP_LABEL[busy]
+      : claimOnly
+        ? "Claim Your Flowers"
+        : "Claim Your Starter Flowers";
 
   return (
     <Centered>
@@ -80,14 +118,14 @@ export function GardenEmpty({ onRefresh }: { onRefresh: () => void }) {
         <p className="font-body text-sm leading-relaxed text-garden-parch/80">
           Claim your six starter flowers to begin growing and crossbreeding.
         </p>
-        <div className="w-56">
+        <div className="w-64">
           <PlayerButton
             variant="action"
-            busy={claiming}
-            disabled={claiming || !ready}
-            onClick={onClaim}
+            busy={busy !== "idle"}
+            disabled={busy !== "idle" || !ready}
+            onClick={onSetup}
           >
-            Claim Your Starter Flowers
+            {label}
           </PlayerButton>
         </div>
         {problem && (

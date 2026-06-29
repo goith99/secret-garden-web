@@ -53,6 +53,7 @@ export function HybridPot() {
     newBloom,
     roundOpen,
     breedsRemaining,
+    breedNotice,
     submittingId,
     profileNeedsMigration,
   } = useGame();
@@ -62,7 +63,8 @@ export function HybridPot() {
   const [showSpentMsg, setShowSpentMsg] = useState(false);
 
   const ready = phase === "Ready"; // both pots filled, idle — armed to cross
-  const growing = isCycling;
+  const confirming = phase === "Confirm"; // awaiting the wallet approval
+  const growing = isCycling && !confirming; // signed & running (Waiting / Growing)
   const bloomed = phase === "BloomReady";
   const failed = phase === "Failed";
   const oneFilled = (potA === null) !== (potB === null); // exactly one pot has a flower
@@ -138,7 +140,7 @@ export function HybridPot() {
         {/* halo */}
         <div
           className={`pointer-events-none absolute inset-0 rounded-3xl transition
-            ${bloomed ? "shadow-[0_0_50px_rgba(230,194,92,0.5)]" : armed ? "shadow-[0_0_40px_rgba(230,194,92,0.4)]" : growing ? "animate-pulseSoft shadow-[0_0_34px_rgba(108,199,207,0.4)]" : ""}`}
+            ${bloomed ? "shadow-[0_0_50px_rgba(230,194,92,0.5)]" : armed ? "shadow-[0_0_40px_rgba(230,194,92,0.4)]" : (growing || confirming) ? "animate-pulseSoft shadow-[0_0_34px_rgba(108,199,207,0.4)]" : ""}`}
         />
         {/* pot vessel */}
         <div className="absolute bottom-2 h-12 w-24 rounded-b-3xl rounded-t-md bg-gradient-to-b from-garden-moss to-garden-green shadow-pot md:h-14 md:w-28 xl:w-32" />
@@ -163,6 +165,15 @@ export function HybridPot() {
                 New bloom
               </span>
             </div>
+          ) : confirming ? (
+            <>
+              <span className="animate-pulseSoft text-3xl" aria-hidden>
+                ✍️
+              </span>
+              <span className="mt-2 max-w-[7rem] font-pixel text-[10px] uppercase leading-tight tracking-wide text-garden-cyan">
+                Waiting for approval…
+              </span>
+            </>
           ) : growing ? (
             <>
               <span className="animate-spin text-3xl drop-shadow-[0_0_8px_rgba(108,199,207,0.6)]" aria-hidden>
@@ -225,6 +236,13 @@ export function HybridPot() {
       {showSpentMsg && exhausted && ready && (
         <p className="max-w-[15rem] text-center font-body text-xs leading-snug text-garden-gold">
           {BREEDS_SPENT_MSG}
+        </p>
+      )}
+
+      {/* Transient "Breeding cancelled." note after a declined breed (auto-hides after 3s). */}
+      {breedNotice && (
+        <p className="max-w-[15rem] text-center font-body text-xs leading-snug text-garden-parch/70">
+          {breedNotice}
         </p>
       )}
 
