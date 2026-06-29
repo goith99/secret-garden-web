@@ -97,10 +97,38 @@ export function useGardenData(): GardenData {
   const reqId = useRef(0);
 
   const load = useCallback(async (): Promise<boolean> => {
-    // No wallet/program yet: leave the initial loading state in place (no sync setState in
-    // the effect — see the post-await setStates below).
-    if (!program || !address) return false;
+    // No program yet: leave the initial loading state in place (no sync setState in the
+    // effect — see the post-await setStates below).
+    if (!program) return false;
     const my = ++reqId.current;
+
+    // Disconnected visitor: load PUBLIC data only (config + active round) so the game stays
+    // visible with real round info. No wallet → no profile/flowers/journal.
+    if (!address) {
+      try {
+        const gameConfig = await fetchGameConfig(program);
+        const activeRound = gameConfig
+          ? await fetchActiveRound(program, gameConfig.currentRound)
+          : null;
+        if (my !== reqId.current) return false;
+        setState({
+          gameConfig,
+          playerProfile: null,
+          flowers: [],
+          activeRound,
+          journal: [],
+          loading: false,
+          error: null,
+        });
+        return true;
+      } catch (e) {
+        if (my !== reqId.current) return false;
+        console.error("[garden] public data load failed:", e);
+        setState((s) => ({ ...s, loading: false }));
+        return false;
+      }
+    }
+
     try {
       const owner = new PublicKey(address);
       const gameConfig = await fetchGameConfig(program);

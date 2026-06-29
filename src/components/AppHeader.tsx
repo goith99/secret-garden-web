@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useGame } from "../game/GameContext";
 import { useGardener } from "../wallet/useGardener";
+import { useConnectWallet } from "../wallet/ConnectWalletContext";
 import { Badge } from "./Badge";
 import { GardenerMenu } from "./GardenerMenu";
 import { OperatorPanel } from "./OperatorPanel";
@@ -10,6 +11,7 @@ import { roundStatusLabel } from "../mocks/presentation";
 export function AppHeader({ compact = false }: { compact?: boolean }) {
   const { challenge, authority } = useGame();
   const { address } = useGardener();
+  const { requestConnect } = useConnectWallet();
   const [operatorOpen, setOperatorOpen] = useState(false);
 
   // The operator button exists in the DOM ONLY for the program authority wallet.
@@ -52,8 +54,20 @@ export function AppHeader({ compact = false }: { compact?: boolean }) {
             ⚙ Operator
           </button>
         )}
-        {/* Stage 6B: real connected gardener identity + leave action. */}
-        <GardenerMenu />
+        {/* Connected: gardener identity + leave. Disconnected: a connect affordance that
+            opens the same prompt the in-game actions use. */}
+        {address ? (
+          <GardenerMenu />
+        ) : (
+          <button
+            type="button"
+            onClick={requestConnect}
+            className="flex min-h-9 items-center gap-2 rounded-md border border-garden-gold/70 bg-garden-gold/10 px-4 py-2 font-pixel text-sm uppercase tracking-wide text-garden-gold transition hover:bg-garden-gold/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan"
+          >
+            <span aria-hidden className="text-base leading-none">🌱</span>
+            <span>Connect Wallet</span>
+          </button>
+        )}
       </div>
       {isOperator && operatorOpen && (
         <OperatorPanel onClose={() => setOperatorOpen(false)} />

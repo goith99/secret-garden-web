@@ -59,6 +59,14 @@ export const MOCK_FLOWERS: Flower[] = [
   flower(9, 255, 3, 4, 29, GenomeStatus.Encrypted),
 ];
 
+/**
+ * The 6 starter flowers only (no hybrids). Used to populate the greenhouse for a DISCONNECTED
+ * visitor so the night garden shows its starters normally while the Hybrid Collection stays
+ * empty (it filters to hybrids). These are visual placeholders — real starters arrive on chain
+ * once a wallet connects and claims them.
+ */
+export const MOCK_STARTERS: Flower[] = MOCK_FLOWERS.slice(0, 6);
+
 /** Active daily challenge (CompetitionRound shape). targetTraits = trait ids 0..7. */
 export const MOCK_CHALLENGE: Challenge = {
   roundId: 7,
