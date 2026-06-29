@@ -33,7 +33,7 @@ export function StarterGarden() {
   };
 
   return (
-    <div className="gh-scroll pointer-events-none flex shrink-0 items-end justify-around gap-1 overflow-x-auto px-2 pb-1 md:px-5">
+    <div className="gh-scroll pointer-events-none flex shrink-0 items-end justify-around gap-1 overflow-x-auto px-2 pb-2 md:px-5">
       {starters.map((f) => {
         const planted = inPot.has(f.id);
         const selected = selectedFlowerId === f.id;

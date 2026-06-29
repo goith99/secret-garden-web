@@ -40,7 +40,6 @@ export function ParentPot({ pot, label }: { pot: PotId; label: string }) {
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <span className="gh-title text-[11px] text-garden-cyan">{label}</span>
       <div
         onClick={onTap}
         onDragOver={(e) => {
@@ -57,6 +56,10 @@ export function ParentPot({ pot, label }: { pot: PotId; label: string }) {
           ${dragOver ? "border-garden-gold bg-garden-gold/10 scale-105" : "border-garden-moss bg-garden-deep/40"}
           ${armed && !flower ? "border-garden-cyan animate-pulseSoft" : ""}`}
       >
+        {/* label pinned to the top INSIDE the pot box */}
+        <span className="pointer-events-none absolute inset-x-0 top-1.5 z-10 gh-title text-center text-[11px] text-garden-cyan">
+          {label}
+        </span>
         {/* pot vessel */}
         <div className="absolute bottom-1 h-9 w-16 rounded-b-2xl rounded-t-md bg-gradient-to-b from-garden-moss to-garden-green shadow-pot md:h-10 md:w-20 xl:w-24" />
         {flower ? (

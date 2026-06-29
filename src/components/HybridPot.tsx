@@ -108,7 +108,6 @@ export function HybridPot() {
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <span className="gh-title text-[11px] text-garden-gold">Hybrid Pot</span>
       <div
         onClick={interactive ? onActivate : undefined}
         onKeyDown={onKeyDown}
@@ -138,6 +137,10 @@ export function HybridPot() {
           ${failed ? "border-garden-rose bg-garden-rose/10 hover:bg-garden-rose/15" : ""}
           ${!armed && !bloomed && !failed ? "border-garden-moss bg-garden-deep/50" : ""}`}
       >
+        {/* label pinned to the top INSIDE the pot box */}
+        <span className="pointer-events-none absolute inset-x-0 top-2 z-10 gh-title text-center text-[11px] text-garden-gold">
+          Hybrid Pot
+        </span>
         {/* halo */}
         <div
           className={`pointer-events-none absolute inset-0 rounded-3xl transition
