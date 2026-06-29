@@ -64,6 +64,13 @@ const ARCIUM_CLUSTER_OFFSET = 456;
 const EXPERIMENT_STATUS_QUEUED = 0;
 const EXPERIMENT_STATUS_COMPLETED = 2;
 
+// Current on-chain PlayerProfile size: 8-byte discriminator + 65-byte struct (Stage 5D layout,
+// which appended `breeds_this_round` (u8) + `last_breed_round` (u32) = 5 bytes). A profile
+// created BEFORE that upgrade is 5 bytes shorter (68), so loading it as a typed
+// Account<PlayerProfile> fails with AccountDidNotDeserialize — the "transaction mismatch" the
+// tester saw on Submit to Challenge. `migrate_profile` grows it in place to this size.
+const PROFILE_ACCOUNT_LEN = 8 + 65;
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Crypto-strong random bytes in the browser (no node `crypto`). */
@@ -378,13 +385,28 @@ export function useGardenActions(): GardenActions {
     }): Promise<string> => {
       if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
       const player = publicKey;
+      const profile = profilePda(player);
+
+      // A pre-Stage-5D PlayerProfile is 5 bytes too short for the current layout, so
+      // submit_entry (which loads `profile` as a typed account) fails to deserialize it. If
+      // the profile is stale, grow it first in a separate, confirmed migrate_profile tx
+      // (idempotent on-chain). New/already-migrated profiles skip this — no extra approval.
+      const info = await program.provider.connection.getAccountInfo(profile);
+      if (info && info.data.length < PROFILE_ACCOUNT_LEN) {
+        const migrateTx = await program.methods
+          .migrateProfile()
+          .accountsPartial({ owner: player, profile })
+          .transaction();
+        await submit(migrateTx);
+      }
+
       const round = roundPda(roundId);
       const tx = await program.methods
         .submitEntry()
         .accountsPartial({
           player,
           config: configPda(),
-          profile: profilePda(player),
+          profile,
           round,
           flowerRecord: new PublicKey(flowerRecord),
           entry: entryPda(round, player),
