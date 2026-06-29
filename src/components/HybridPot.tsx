@@ -54,6 +54,7 @@ export function HybridPot() {
     roundOpen,
     breedsRemaining,
     breedNotice,
+    dropBlockedNotice,
     submittingId,
     profileNeedsMigration,
   } = useGame();
@@ -238,6 +239,13 @@ export function HybridPot() {
       {breedNotice && (
         <p className="max-w-[15rem] text-center font-body text-xs leading-snug text-garden-parch/70">
           {breedNotice}
+        </p>
+      )}
+
+      {/* "This flower is in the current challenge" — if an Entered flower reaches a pot (2s). */}
+      {dropBlockedNotice && (
+        <p className="max-w-[15rem] text-center font-body text-xs leading-snug text-garden-gold">
+          {dropBlockedNotice}
         </p>
       )}
 
