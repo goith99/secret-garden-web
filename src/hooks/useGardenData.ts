@@ -36,6 +36,8 @@ export interface GardenData {
   journal: JournalEntry[];
   loading: boolean;
   error: string | null;
+  /** True when the connected wallet's profile is a pre-5D (68-byte) account needing migration. */
+  profileNeedsMigration: boolean;
   /** Reload on-chain data. Resolves true on success, false if the fetch failed. */
   refetch: () => Promise<boolean>;
 }
@@ -64,6 +66,7 @@ const EMPTY: DataState = {
   journal: [],
   loading: true,
   error: null,
+  profileNeedsMigration: false,
 };
 
 /** Build the Hybrid Journal from bred flowers, resolving each parent's species by PDA. */
@@ -119,6 +122,7 @@ export function useGardenData(): GardenData {
           journal: [],
           loading: false,
           error: null,
+          profileNeedsMigration: false,
         });
         return true;
       } catch (e) {
@@ -135,6 +139,7 @@ export function useGardenData(): GardenData {
           journal: [],
           loading: false,
           error: null,
+          profileNeedsMigration: false,
         });
         return false;
       }
@@ -156,6 +161,7 @@ export function useGardenData(): GardenData {
           journal: [],
           loading: false,
           error: null,
+          profileNeedsMigration: false,
         });
         return true;
       }
@@ -178,6 +184,7 @@ export function useGardenData(): GardenData {
         journal: buildJournal(flowers),
         loading: false,
         error: null,
+        profileNeedsMigration: playerProfile.needsMigration,
       });
       return true;
     } catch (e) {

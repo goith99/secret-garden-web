@@ -62,6 +62,11 @@ export interface GardenProfile {
   breedsThisRound: number;
   /** The round the player last bred in; when it differs from the live round, breedsThisRound is stale. */
   lastBreedRound: number;
+  /**
+   * True when this is a pre-Stage-5D (68-byte) account that must be migrated before it can be
+   * written by breed/submit. Drives the in-game "update your garden" notice (no auto-migration).
+   */
+  needsMigration: boolean;
 }
 
 // ---- seed helpers (Uint8Array, no Buffer dependency) ---------------------------------
@@ -131,6 +136,7 @@ function mapProfile(p: RawProfile): GardenProfile {
     createdAt: p.createdAt.toNumber(),
     breedsThisRound: p.breedsThisRound,
     lastBreedRound: p.lastBreedRound,
+    needsMigration: false, // current layout
   };
 }
 
@@ -202,6 +208,7 @@ function decodeLegacyProfile(data: Uint8Array): GardenProfile {
     // bump (67). The two Stage-5D fields don't exist yet → default to 0.
     breedsThisRound: 0,
     lastBreedRound: 0,
+    needsMigration: true, // pre-5D account — must be migrated before breed/submit can write it
   };
 }
 

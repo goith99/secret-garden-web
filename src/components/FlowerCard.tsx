@@ -29,7 +29,7 @@ export function FlowerCard({
   /** Show the "SUBMIT TO CHALLENGE" control. Hybrids only — starters are never submittable. */
   showSubmit: boolean;
 }) {
-  const { canSubmit, submitFlower, submittingId } = useGame();
+  const { canSubmit, submitFlower, submittingId, profileNeedsMigration } = useGame();
   const r = rarityStyle(flower.rarity);
 
   const onDragStart = (e: DragEvent<HTMLButtonElement>) => {
@@ -89,7 +89,13 @@ export function FlowerCard({
             type="button"
             onClick={onGo}
             disabled={!goEnabled || submitting}
-            title={goEnabled ? "Enter this flower in the challenge" : "No open challenge right now"}
+            title={
+              goEnabled
+                ? "Enter this flower in the challenge"
+                : profileNeedsMigration
+                  ? "Update your garden first (see notice above)"
+                  : "No open challenge right now"
+            }
             className={`w-full rounded-md border px-2 py-1 font-pixel text-[9px] uppercase tracking-wide transition
               focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan
               ${goEnabled && !submitting

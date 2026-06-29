@@ -1,5 +1,6 @@
 import { useGame } from "../game/GameContext";
 import { AppHeader } from "../components/AppHeader";
+import { MigrationNotice } from "../components/MigrationNotice";
 import { HybridCollection } from "../components/HybridCollection";
 import { Greenhouse } from "../components/Greenhouse";
 import { JournalPanel } from "../components/JournalPanel";
@@ -17,6 +18,7 @@ export function MobileLayout() {
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <AppHeader compact />
+      <MigrationNotice />
 
       <main className="gh-scroll min-h-0 flex-1 overflow-y-auto p-3">
         {activeTab === "flowers" && (

@@ -54,6 +54,7 @@ export function HybridPot() {
     roundOpen,
     breedsRemaining,
     submittingId,
+    profileNeedsMigration,
   } = useGame();
   const { connected } = useGardener();
   const { requestConnect } = useConnectWallet();
@@ -67,16 +68,19 @@ export function HybridPot() {
   const oneFilled = (potA === null) !== (potB === null); // exactly one pot has a flower
   const submitting = submittingId !== null;
   const exhausted = breedsRemaining <= 0; // per-round breed cap spent (connected/real mode)
+  const needsUpdate = connected && profileNeedsMigration; // one-time migrate pending
   // The gold "Crossbreed" affordance only when a connected player can actually cross now.
-  const armed = ready && connected && !exhausted;
+  const armed = ready && connected && !exhausted && !needsUpdate;
 
   // What a click does, by state. Disconnected → prompt to connect (the game stays visible);
-  // exhausted → show the "come back next round" note; otherwise cross / clear a failure.
+  // update pending → disabled (the notice bar drives it); exhausted → show the "come back next
+  // round" note; otherwise cross / clear a failure.
   const onActivate = () => {
     if (!connected) {
       requestConnect();
       return;
     }
+    if (needsUpdate) return; // disabled — the "update your garden" notice handles migration
     if (ready) {
       if (exhausted) {
         setShowSpentMsg(true);
@@ -88,8 +92,8 @@ export function HybridPot() {
     }
   };
   // Clickable whenever a click has a meaning: connect prompt, arm/cross, exhausted note, or
-  // clearing a failure. (Never at BloomReady — the buttons below own that.)
-  const interactive = !bloomed && (!connected || ready || failed);
+  // clearing a failure. Never while an update is pending (notice drives it) or at BloomReady.
+  const interactive = !bloomed && (!connected || (!needsUpdate && (ready || failed)));
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (!interactive) return;
@@ -107,18 +111,21 @@ export function HybridPot() {
         onKeyDown={onKeyDown}
         role={interactive ? "button" : undefined}
         tabIndex={interactive ? 0 : undefined}
+        title={needsUpdate ? "Update your garden first (see notice above)" : undefined}
         aria-label={
           !connected
             ? "Connect your wallet to start breeding"
-            : armed
-              ? "Crossbreed the two flowers"
-              : ready && exhausted
-                ? "No breeds remaining this round"
-                : failed
-                  ? "Bloom failed — try again"
-                  : bloomed
-                    ? "Your new bloom is ready"
-                    : undefined
+            : needsUpdate
+              ? "Update your garden first (see notice above)"
+              : armed
+                ? "Crossbreed the two flowers"
+                : ready && exhausted
+                  ? "No breeds remaining this round"
+                  : failed
+                    ? "Bloom failed — try again"
+                    : bloomed
+                      ? "Your new bloom is ready"
+                      : undefined
         }
         className={`relative flex h-32 w-32 items-end justify-center rounded-3xl border-2 outline-none transition md:h-40 md:w-40 xl:h-48 xl:w-48
           focus-visible:ring-2 focus-visible:ring-garden-cyan
@@ -172,6 +179,15 @@ export function HybridPot() {
               </span>
               <span className="mt-1 max-w-[7rem] font-pixel text-[10px] uppercase leading-tight tracking-wide text-garden-mint/80">
                 Connect wallet to start breeding
+              </span>
+            </>
+          ) : needsUpdate ? (
+            <>
+              <span className="text-2xl" aria-hidden>
+                🪴
+              </span>
+              <span className="mt-1 max-w-[7rem] font-pixel text-[10px] uppercase leading-tight tracking-wide text-garden-gold/80">
+                Update garden first
               </span>
             </>
           ) : armed ? (
