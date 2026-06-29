@@ -4,7 +4,7 @@ import { NetworkGuardProvider, useNetworkGuard } from "./wallet/useNetworkGuard"
 import { ConnectWalletProvider } from "./wallet/ConnectWalletContext";
 import { useGardener } from "./wallet/useGardener";
 import { SwitchNetworkScreen } from "./screens/SwitchNetworkScreen";
-import { GameProvider } from "./game/GameContext";
+import { GameProvider, type GardenInitial } from "./game/GameContext";
 import { useGardenData, NO_ACTIVE_ROUND } from "./hooks/useGardenData";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { DesktopLayout } from "./layouts/DesktopLayout";
@@ -25,54 +25,51 @@ function GameView() {
   return isMobile ? <MobileLayout /> : <DesktopLayout />;
 }
 
-/** Connected player: their real garden, with the loading / error / claim gates intact. */
-function ConnectedApp() {
+/**
+ * The garden. ALWAYS renders the 3-column game. The loading / error / claim full-screen states
+ * apply ONLY to a connected wallet whose own garden is being fetched — a disconnected visitor
+ * skips every gate and always sees the layout (public round data + the starter flowers), so a
+ * failed public read can never replace the game with the "out of reach" error.
+ */
+function GardenApp() {
+  const { connected } = useGardener();
   const { flowers, journal, activeRound, playerProfile, gameConfig, loading, error, refetch } =
     useGardenData();
 
-  // First load (no data yet) shows the tending state; a background refresh keeps the game up.
-  if (loading && !playerProfile) return <GardenLoading />;
-  // The full-screen "out of reach" state is ONLY for an initial load failure (no garden yet).
-  // A failed background refetch after a transaction keeps the game on screen and is retried
-  // quietly (see GameContext bloom toast) — it must never blow away the player's session.
-  if (error && !playerProfile) return <GardenError message={error} onRetry={refetch} />;
-  if (!playerProfile) return <GardenEmpty onRefresh={refetch} />;
+  // Connected-only gates. Gated strictly on `connected` so a disconnected visitor never hits
+  // them, regardless of how the public read resolves.
+  if (connected) {
+    // First load (no garden yet) shows the tending state; a background refresh keeps it up.
+    if (loading && !playerProfile) return <GardenLoading />;
+    // ONLY a connected wallet whose own garden genuinely failed to load (no profile after the
+    // fetch) sees this. A failed background refetch keeps the game on screen (see bloom toast).
+    if (error && !playerProfile) return <GardenError message={error} onRetry={refetch} />;
+    if (!playerProfile) return <GardenEmpty onRefresh={refetch} />;
+  }
+
+  const initial: GardenInitial =
+    connected && playerProfile
+      ? {
+          flowers,
+          journal,
+          challenge: activeRound ?? NO_ACTIVE_ROUND,
+          winners: [], // revealed winners arrive with scoring (not yet on devnet) — see notes
+          authority: gameConfig?.authority ?? null, // gates the hidden operator panel
+          breedsThisRound: playerProfile.breedsThisRound,
+          lastBreedRound: playerProfile.lastBreedRound,
+        }
+      : {
+          // Disconnected: visual starters in the garden, empty collection, public round info.
+          // No `onRefetch`, so breeding stays inert — the Hybrid Pot raises the connect prompt.
+          flowers: MOCK_STARTERS,
+          journal: [],
+          challenge: activeRound ?? NO_ACTIVE_ROUND,
+          winners: [],
+          authority: null,
+        };
 
   return (
-    <GameProvider
-      initial={{
-        flowers,
-        journal,
-        challenge: activeRound ?? NO_ACTIVE_ROUND,
-        winners: [], // revealed winners arrive with scoring (not yet on devnet) — see notes
-        authority: gameConfig?.authority ?? null, // gates the hidden operator panel
-        breedsThisRound: playerProfile.breedsThisRound,
-        lastBreedRound: playerProfile.lastBreedRound,
-      }}
-      onRefetch={refetch}
-    >
-      <GameView />
-    </GameProvider>
-  );
-}
-
-/**
- * Disconnected visitor: the same layout, fed PUBLIC round data plus visual starter flowers.
- * No `onRefetch`, so breeding stays inert — the Hybrid Pot raises the connect prompt instead.
- */
-function DisconnectedApp() {
-  const { activeRound } = useGardenData();
-
-  return (
-    <GameProvider
-      initial={{
-        flowers: MOCK_STARTERS,
-        journal: [],
-        challenge: activeRound ?? NO_ACTIVE_ROUND,
-        winners: [], // revealed winners arrive with scoring (not yet on devnet)
-        authority: null,
-      }}
-    >
+    <GameProvider initial={initial} onRefetch={connected ? refetch : undefined}>
       <GameView />
     </GameProvider>
   );
@@ -94,10 +91,8 @@ function Gate() {
     prevConnected.current = connected;
   }, [connected]);
 
-  let view;
-  if (!connected) view = <DisconnectedApp />;
-  else if (wrongNetwork) view = <SwitchNetworkScreen />;
-  else view = <ConnectedApp />;
+  // The wrong-network screen is a connected-only takeover; everyone else gets the game.
+  const view = connected && wrongNetwork ? <SwitchNetworkScreen /> : <GardenApp />;
 
   return (
     <>
