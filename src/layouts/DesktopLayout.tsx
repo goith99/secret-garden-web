@@ -1,5 +1,6 @@
 import { useGame } from "../game/GameContext";
 import { AppHeader } from "../components/AppHeader";
+import { MigrationNotice } from "../components/MigrationNotice";
 import { HybridCollection } from "../components/HybridCollection";
 import { Greenhouse } from "../components/Greenhouse";
 import { JournalPanel } from "../components/JournalPanel";
@@ -16,6 +17,7 @@ export function DesktopLayout() {
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <AppHeader />
+      <MigrationNotice />
       <main className="grid min-h-0 flex-1 grid-cols-[clamp(260px,22vw,320px)_1fr_clamp(280px,24vw,360px)] gap-3 p-3">
         {/* LEFT — Hybrid Collection (bred flowers only; starters live in the greenhouse) */}
         <aside className="gh-panel flex min-h-0 flex-col p-3">

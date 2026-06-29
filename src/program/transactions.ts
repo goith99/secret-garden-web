@@ -47,7 +47,6 @@ import { useProgram, type SecretGardenProgram } from "./client";
 import { useNetworkGuard } from "../wallet/useNetworkGuard";
 import {
   PROGRAM_ID,
-  PROFILE_ACCOUNT_LEN,
   configPda,
   profilePda,
   flowerPda,
@@ -228,11 +227,11 @@ export interface GardenActions {
   }) => Promise<StartBreedingResult>;
   submitEntry: (args: { roundId: number; flowerRecord: string }) => Promise<string>;
   /**
-   * Grow a pre-Stage-5D (68-byte) PlayerProfile to the current layout if (and only if) it's
-   * stale. A no-op for a missing or already-current profile. Safe to fire-and-forget on load so
-   * later breed/submit operations don't hit AccountDidNotDeserialize.
+   * Grow a pre-Stage-5D (68-byte) PlayerProfile to the current layout. Player-initiated ONLY
+   * (the in-game "update your garden" notice) — never fired automatically, so there is no
+   * surprise wallet popup. Idempotent on-chain (a no-op success if already current).
    */
-  migrateProfileIfStale: () => Promise<void>;
+  migrateProfile: () => Promise<string>;
   pollBreeding: (experiment: PublicKey) => Promise<ExperimentOutcome>;
   /** Read one of the connected wallet's FlowerRecords by index (e.g. a new offspring). */
   fetchFlower: (index: number) => Promise<Flower | null>;
@@ -269,19 +268,16 @@ export function useGardenActions(): GardenActions {
     [send, connection, reportWrongNetwork],
   );
 
-  // Grow a pre-5D PlayerProfile to the current layout, but only when it's actually stale (the
-  // raw account is shorter than the current size). A no-op otherwise — no wallet popup. Used
-  // both proactively on load (fire-and-forget) and defensively before submit_entry.
-  const migrateProfileIfStale = useCallback(async (): Promise<void> => {
-    if (!program || !publicKey) return;
-    const profile = profilePda(publicKey);
-    const info = await program.provider.connection.getAccountInfo(profile);
-    if (!info || info.data.length >= PROFILE_ACCOUNT_LEN) return; // missing or already current
+  // Grow a pre-5D PlayerProfile to the current layout. Called ONLY when the player taps the
+  // in-game "update your garden" notice — never automatically — so the wallet popup is always
+  // something the player explicitly asked for. Idempotent on-chain (Ok even if already current).
+  const migrateProfile = useCallback(async (): Promise<string> => {
+    if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
     const tx = await program.methods
       .migrateProfile()
-      .accountsPartial({ owner: publicKey, profile })
+      .accountsPartial({ owner: publicKey, profile: profilePda(publicKey) })
       .transaction();
-    await submit(tx);
+    return submit(tx);
   }, [program, publicKey, submit]);
 
   const claimStarters = useCallback(async (): Promise<string> => {
@@ -402,10 +398,9 @@ export function useGardenActions(): GardenActions {
       const player = publicKey;
       const profile = profilePda(player);
 
-      // A pre-Stage-5D PlayerProfile is 5 bytes too short for the current layout, so
-      // submit_entry (which loads `profile` as a typed account) fails to deserialize it. Grow
-      // it first in a separate, confirmed tx if stale (idempotent; skipped when current).
-      await migrateProfileIfStale();
+      // NOTE: a pre-5D profile must be migrated FIRST (it can't be loaded as a typed account),
+      // but that is now an explicit, player-initiated step — the UI disables Submit until the
+      // "update your garden" notice is actioned, so we never silently migrate here.
 
       const round = roundPda(roundId);
       const tx = await program.methods
@@ -421,7 +416,7 @@ export function useGardenActions(): GardenActions {
         .transaction();
       return submit(tx);
     },
-    [program, publicKey, submit, migrateProfileIfStale],
+    [program, publicKey, submit],
   );
 
   const pollBreeding = useCallback(
@@ -446,11 +441,11 @@ export function useGardenActions(): GardenActions {
       claimStarters,
       startBreeding,
       submitEntry,
-      migrateProfileIfStale,
+      migrateProfile,
       pollBreeding,
       fetchFlower: fetchFlowerRecord,
     }),
-    [ready, claimStarters, startBreeding, submitEntry, migrateProfileIfStale, pollBreeding, fetchFlowerRecord],
+    [ready, claimStarters, startBreeding, submitEntry, migrateProfile, pollBreeding, fetchFlowerRecord],
   );
 }
 

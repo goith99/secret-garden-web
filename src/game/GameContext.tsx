@@ -76,6 +76,8 @@ export interface GardenInitial {
   /** Breeding attempts used this round + the round they counted toward (from PlayerProfile). */
   breedsThisRound?: number;
   lastBreedRound?: number;
+  /** True when the connected wallet's profile is pre-5D and must be migrated before breed/submit. */
+  profileNeedsMigration?: boolean;
 }
 
 /** Per-round breeding cap enforced on-chain (MAX_BREEDS_PER_ROUND). */
@@ -109,6 +111,12 @@ interface GameContextValue {
   bloomToast: string | null;
   /** GameConfig.authority (or null). The operator panel renders only when this === wallet. */
   authority: string | null;
+  /** True when the player's profile must be migrated (one-time) before they can breed or submit. */
+  profileNeedsMigration: boolean;
+  /** True while the one-time migrate transaction is in flight (notice shows a spinner). */
+  migrating: boolean;
+  /** Player taps the "update your garden" notice → run the one-time migrate, then refresh. */
+  migrateProfile: () => void;
   /** Reload on-chain garden data (operator panel uses it after each authority action). */
   refetchGarden: () => Promise<boolean>;
 
@@ -175,6 +183,7 @@ export function GameProvider({
   const [breedError, setBreedError] = useState<string | null>(null);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [bloomToast, setBloomToast] = useState<string | null>(null);
+  const [migrating, setMigrating] = useState(false);
   const [newBloom, setNewBloom] = useState<Flower | null>(null);
   const [journal, setJournal] = useState<JournalEntry[]>(initial?.journal ?? MOCK_JOURNAL);
   const [activeTab, setActiveTab] = useState<MobileTab>("garden");
@@ -194,6 +203,10 @@ export function GameProvider({
     lastBreedRound === challenge.roundId
       ? Math.max(0, MAX_BREEDS_PER_ROUND - breedsThisRound)
       : MAX_BREEDS_PER_ROUND;
+
+  // A pre-5D profile must be migrated (one-time) before it can be written by breed/submit. We
+  // never migrate silently — this drives the in-game notice and disables breed/submit until done.
+  const profileNeedsMigration = initial?.profileNeedsMigration ?? false;
   const refetchGarden = useCallback(
     (): Promise<boolean> => (onRefetch ? onRefetch() : Promise.resolve(false)),
     [onRefetch],
@@ -295,9 +308,9 @@ export function GameProvider({
   // When `onRefetch` is absent (standalone/demo with mocks) it walks a short timed cycle.
   const startCrossbreed = useCallback(() => {
     if (!bothPotsFilled || activePhase || !potA || !potB) return;
-    // Real mode only: the per-round breed cap is enforced on-chain; don't even build the tx
-    // once it's spent (the Hybrid Pot shows the "come back next round" message instead).
-    if (onRefetch && breedsRemaining <= 0) return;
+    // Real mode only: never build a breed tx when the per-round cap is spent OR the profile
+    // still needs its one-time migration (the Hybrid Pot shows the matching message instead).
+    if (onRefetch && (breedsRemaining <= 0 || profileNeedsMigration)) return;
     clearTimers();
     setBreedError(null);
     setNewBloom(null);
@@ -356,7 +369,7 @@ export function GameProvider({
         }
       }
     })();
-  }, [bothPotsFilled, activePhase, potA, potB, environment, actions, onRefetch, clearTimers, breedsRemaining]);
+  }, [bothPotsFilled, activePhase, potA, potB, environment, actions, onRefetch, clearTimers, breedsRemaining, profileNeedsMigration]);
 
   // Real mode: the hybrid is already on-chain. Reset to idle immediately so the player can
   // keep playing, then refetch to reveal it. A refetch failure NEVER tears down the game
@@ -454,15 +467,17 @@ export function GameProvider({
     setActivePhase("Failed");
   }, [clearTimers]);
 
-  // GO (submit_entry): only when a real round is Open AND this flower is still Active.
+  // GO (submit_entry): only when a real round is Open, this flower is still Active, AND the
+  // profile is current (a pre-5D profile must be migrated first — see migrateProfile).
   const canSubmit = useCallback(
     (flower: Flower): boolean =>
       !!onRefetch &&
+      !profileNeedsMigration &&
       challenge.roundId > 0 &&
       challenge.status === RoundStatus.Open &&
       flower.status === FlowerStatus.Active &&
       submittingId === null,
-    [onRefetch, challenge.roundId, challenge.status, submittingId],
+    [onRefetch, profileNeedsMigration, challenge.roundId, challenge.status, submittingId],
   );
 
   const submitFlower = useCallback(
@@ -504,6 +519,25 @@ export function GameProvider({
     })();
   }, [onRefetch]);
 
+  // "Update your garden" notice tap → run the one-time migrate_profile, then refetch so the
+  // profile reads as current and the notice clears + breed/submit re-enable. A rejected/failed
+  // migrate leaves profileNeedsMigration true, so the notice stays and the player can retry.
+  const migrateProfile = useCallback(() => {
+    if (!onRefetch || migrating || !profileNeedsMigration) return;
+    setMigrating(true);
+    void (async () => {
+      try {
+        await actions.migrateProfile();
+        if (!mounted.current) return;
+        await onRefetch();
+      } catch {
+        /* declined or failed — notice stays visible so the player can try again later */
+      } finally {
+        if (mounted.current) setMigrating(false);
+      }
+    })();
+  }, [onRefetch, migrating, profileNeedsMigration, actions]);
+
   const value = useMemo<GameContextValue>(
     () => ({
       shelf,
@@ -526,6 +560,9 @@ export function GameProvider({
       submittingId,
       bloomToast,
       authority,
+      profileNeedsMigration,
+      migrating,
+      migrateProfile,
       refetchGarden,
       setActiveTab,
       selectFlower,
@@ -545,7 +582,8 @@ export function GameProvider({
     [
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
       newBloom, roundOpen, breedsRemaining, breedError, journal, challenge, winners, activeTab, submittingId,
-      bloomToast, authority, refetchGarden, selectFlower, placeInPot, autoPlace, clearPot,
+      bloomToast, authority, profileNeedsMigration, migrating, migrateProfile, refetchGarden,
+      selectFlower, placeInPot, autoPlace, clearPot,
       setEnvironment, startCrossbreed, collectBloom, submitBloom, resetAfterFailure, canSubmit,
       submitFlower, retryRefresh, simulateFailure,
     ],

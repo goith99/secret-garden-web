@@ -33,13 +33,12 @@ function GameView() {
  */
 function GardenApp() {
   const { connected } = useGardener();
-  const { flowers, journal, activeRound, playerProfile, gameConfig, loading, error, refetch } =
+  const { flowers, journal, activeRound, playerProfile, gameConfig, loading, error, refetch, profileNeedsMigration } =
     useGardenData();
 
   // NOTE: a pre-5D (68-byte) profile is read safely (fetchPlayerProfile decodes the old layout
-  // and defaults the new fields), and is migrated on-chain ONLY when the player explicitly acts
-  // (submit_entry grows it first — see useGardenActions). We deliberately do NOT auto-migrate on
-  // connect: that would pop an unsolicited wallet approval the user never asked for.
+  // and defaults the new fields). We NEVER auto-migrate — `profileNeedsMigration` drives an
+  // in-game "update your garden" notice; the player chooses when to run the one-time migrate.
 
   // Connected-only gates. Gated strictly on `connected` so a disconnected visitor never hits
   // them, regardless of how the public read resolves.
@@ -62,6 +61,7 @@ function GardenApp() {
           authority: gameConfig?.authority ?? null, // gates the hidden operator panel
           breedsThisRound: playerProfile.breedsThisRound,
           lastBreedRound: playerProfile.lastBreedRound,
+          profileNeedsMigration,
         }
       : {
           // Disconnected: visual starters in the garden, empty collection, public round info.
