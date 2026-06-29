@@ -28,6 +28,14 @@ import {
 export const PROGRAM_ID = new PublicKey(idl.address);
 const DEFAULT_PUBKEY = PublicKey.default.toBase58(); // "111…111" — used for empty parents
 
+/**
+ * Current PlayerProfile account size: 8-byte discriminator + 65-byte struct (Stage 5D layout,
+ * which appended `breeds_this_round` (u8) + `last_breed_round` (u32) = 5 bytes). A profile
+ * created BEFORE that upgrade is exactly 5 bytes shorter (68), so Anchor's borsh decode would
+ * RangeError trying to read the two missing fields — see fetchPlayerProfile / decodeLegacyProfile.
+ */
+export const PROFILE_ACCOUNT_LEN = 8 + 65;
+
 type RawFlower = IdlAccounts<SecretGarden>["flowerRecord"];
 type RawProfile = IdlAccounts<SecretGarden>["playerProfile"];
 type RawConfig = IdlAccounts<SecretGarden>["gameConfig"];
@@ -169,11 +177,46 @@ export async function fetchGameConfig(
   return acc ? mapConfig(acc) : null;
 }
 
+/**
+ * Decode a pre-Stage-5D (68-byte) PlayerProfile straight from raw bytes. The old layout has no
+ * `breeds_this_round` / `last_breed_round`, so Anchor would RangeError reading past the buffer.
+ * We read the fields the UI needs by fixed offset and default the two missing ones to 0 (a
+ * background migrate_profile grows such accounts to the current layout — see useGardenActions).
+ *
+ * Old struct (after the 8-byte discriminator): owner[32] starter_claimed[1] total_flowers(u16)
+ * total_crosses(u16) daily_attempts[1] final_submissions[1] created_at(i64)
+ * active_experiment_count(u32) total_experiments(u32) next_flower_index(u32) bump[1] = 60 bytes.
+ */
+function decodeLegacyProfile(data: Uint8Array): GardenProfile {
+  const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  return {
+    owner: new PublicKey(data.subarray(8, 40)).toBase58(),
+    starterClaimed: data[40] !== 0,
+    totalFlowers: dv.getUint16(41, true),
+    totalCrosses: dv.getUint16(43, true),
+    // daily_attempts (45) + final_submissions (46) are not surfaced in the UI.
+    createdAt: Number(dv.getBigInt64(47, true)),
+    // active_experiment_count (55..59) is not surfaced in the UI.
+    totalExperiments: dv.getUint32(59, true),
+    nextFlowerIndex: dv.getUint32(63, true),
+    // bump (67). The two Stage-5D fields don't exist yet → default to 0.
+    breedsThisRound: 0,
+    lastBreedRound: 0,
+  };
+}
+
 export async function fetchPlayerProfile(
   program: SecretGardenProgram,
   owner: PublicKey,
 ): Promise<GardenProfile | null> {
-  const acc = await program.account.playerProfile.fetchNullable(profilePda(owner));
+  const pda = profilePda(owner);
+  const info = await program.provider.connection.getAccountInfo(pda);
+  if (!info) return null; // no profile yet — a new player (not an error)
+  // Pre-5D accounts are 5 bytes short; decode the old layout by hand so Anchor never RangeErrors.
+  if (info.data.length < PROFILE_ACCOUNT_LEN) {
+    return decodeLegacyProfile(Uint8Array.from(info.data));
+  }
+  const acc = await program.account.playerProfile.fetchNullable(pda);
   return acc ? mapProfile(acc) : null;
 }
 
