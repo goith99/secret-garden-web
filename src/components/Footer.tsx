@@ -54,7 +54,7 @@ export function Footer() {
             <GitHubIcon />
           </a>
           <a
-            href="https://x.com/0x_goith"
+            href="https://x.com/garden_protocol"
             target="_blank"
             rel="noopener noreferrer"
             aria-label="X (Twitter) profile"
