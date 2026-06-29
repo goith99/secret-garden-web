@@ -124,7 +124,18 @@ export function useGardenData(): GardenData {
       } catch (e) {
         if (my !== reqId.current) return false;
         console.error("[garden] public data load failed:", e);
-        setState((s) => ({ ...s, loading: false }));
+        // Disconnected: a failed public read must NEVER surface the full-screen "out of reach"
+        // error. Fall back to a clean empty/public state so the game stays visible with empty
+        // panels (left: connect prompt, center: starters, right: empty round info).
+        setState({
+          gameConfig: null,
+          playerProfile: null,
+          flowers: [],
+          activeRound: null,
+          journal: [],
+          loading: false,
+          error: null,
+        });
         return false;
       }
     }
