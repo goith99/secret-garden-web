@@ -220,24 +220,19 @@ export function GameProvider({
   }, []);
   useEffect(() => clearTimers, [clearTimers]); // clear pending timers on unmount
 
-  // A breeding session must never outlive the wallet that started it. When the wallet
-  // disconnects, a different address connects, or the app first mounts, wipe any in-flight or
-  // finished breeding state so every new session opens on a clean SEEDBED. Without this, a
-  // previously rejected breed would greet a reconnecting user as an alarming "BLOOM FAILED".
-  // Reacting to the wallet (an external system), so the set-state-in-effect rule is
-  // scoped-disabled (same pattern as useGardenData / the chain-data adopt effect above).
+  // Reset breeding state whenever the wallet changes or disconnects (and on first mount), so
+  // every wallet session starts with a clean Hybrid Pot — never a stale "BLOOM FAILED" from a
+  // previously rejected breed under a different wallet. Reacting to the wallet (an external
+  // system), so the set-state-in-effect rule is scoped-disabled (same pattern as useGardenData).
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect */
-    clearTimers();
-    setActivePhase(null); // back to idle (derived phase falls to SEEDBED/Ready from the pots)
-    setPotA(null);
-    setPotB(null);
-    setNewBloom(null);
-    setBreedError(null);
-    setBloomToast(null);
-    setSubmittingId(null);
+    setActivePhase(null); // breeding phase → idle (pot renders SEEDBED / AWAITING A CROSS)
+    setPotA(null); // clear Parent A
+    setPotB(null); // clear Parent B
+    setNewBloom(null); // drop any finished/failed bloom
+    setBreedError(null); // clear any pending breed error
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [connected, address, clearTimers]);
+  }, [address, connected]);
 
   const bothPotsFilled = potA !== null && potB !== null;
   // Derived phase: an active phase if one is running, else the resting phase from the pots.
