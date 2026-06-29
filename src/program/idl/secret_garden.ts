@@ -908,6 +908,69 @@ export type SecretGarden = {
       "args": []
     },
     {
+      "name": "migrateProfile",
+      "docs": [
+        "Stage 5D migration: grows a pre-5D `PlayerProfile` (created with the smaller layout,",
+        "before `breeds_this_round`/`last_breed_round` were appended) by 5 bytes so the",
+        "current program can read it. Unlike `realloc_flower_genome`, the profile here is",
+        "taken as a RAW account: the old layout is 5 bytes short of `PlayerProfile`, so loading",
+        "it as `Account<PlayerProfile>` would fail with `AccountDidNotDeserialize` BEFORE any",
+        "realloc constraint could run. We grow it in place, preserving the discriminator and",
+        "every existing field, and zero-fill the two appended fields. Idempotent (a profile",
+        "already at the new size is a no-op) and owner-only (the PDA seeds bind it to the",
+        "signer). Runs regardless of the pause kill-switch — it is a recovery/maintenance op."
+      ],
+      "discriminator": [
+        224,
+        187,
+        132,
+        189,
+        185,
+        163,
+        183,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "profile",
+          "docs": [
+            "`PlayerProfile`, so it cannot be loaded as a typed `Account`."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "openRound",
       "docs": [
         "Opens the next competition round (authority only; previous round must be final)."
@@ -2266,6 +2329,11 @@ export type SecretGarden = {
       "code": 6026,
       "name": "invalidRentDestination",
       "msg": "The rent destination must be the flower owner"
+    },
+    {
+      "code": 6027,
+      "name": "breedingLimitReached",
+      "msg": "You have used all 5 breeding attempts for this round"
     }
   ],
   "types": [
@@ -3689,6 +3757,22 @@ export type SecretGarden = {
               "PDA bump."
             ],
             "type": "u8"
+          },
+          {
+            "name": "breedsThisRound",
+            "docs": [
+              "`start_breeding` attempts used in the round identified by `last_breed_round`",
+              "(0..=`MAX_BREEDS_PER_ROUND`). Reset to 0 lazily on the first breed of a new round."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "lastBreedRound",
+            "docs": [
+              "The `GameConfig::current_round` (truncated to `u32`) the player last bred in. When",
+              "this differs from the live `current_round`, `breeds_this_round` is stale and resets."
+            ],
+            "type": "u32"
           }
         ]
       }
