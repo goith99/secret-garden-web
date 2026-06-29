@@ -5,7 +5,6 @@ import { ConnectWalletProvider } from "./wallet/ConnectWalletContext";
 import { useGardener } from "./wallet/useGardener";
 import { SwitchNetworkScreen } from "./screens/SwitchNetworkScreen";
 import { GameProvider, type GardenInitial } from "./game/GameContext";
-import { useGardenActions } from "./program/transactions";
 import { useGardenData, NO_ACTIVE_ROUND } from "./hooks/useGardenData";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { DesktopLayout } from "./layouts/DesktopLayout";
@@ -36,20 +35,11 @@ function GardenApp() {
   const { connected } = useGardener();
   const { flowers, journal, activeRound, playerProfile, gameConfig, loading, error, refetch } =
     useGardenData();
-  const { migrateProfileIfStale } = useGardenActions();
 
-  // Proactively migrate a pre-5D (68-byte) profile once per connected wallet, so a later breed
-  // or submit doesn't hit AccountDidNotDeserialize. Fire-and-forget (self-gates to a no-op when
-  // the profile is already current, so no wallet popup unless a migration is genuinely needed).
-  const migratedFor = useRef<string | null>(null);
-  useEffect(() => {
-    if (!connected || !playerProfile) return;
-    if (migratedFor.current === playerProfile.owner) return;
-    migratedFor.current = playerProfile.owner;
-    void migrateProfileIfStale().catch(() => {
-      /* best-effort: breed/submit keep their own migration guard */
-    });
-  }, [connected, playerProfile, migrateProfileIfStale]);
+  // NOTE: a pre-5D (68-byte) profile is read safely (fetchPlayerProfile decodes the old layout
+  // and defaults the new fields), and is migrated on-chain ONLY when the player explicitly acts
+  // (submit_entry grows it first — see useGardenActions). We deliberately do NOT auto-migrate on
+  // connect: that would pop an unsolicited wallet approval the user never asked for.
 
   // Connected-only gates. Gated strictly on `connected` so a disconnected visitor never hits
   // them, regardless of how the public read resolves.
