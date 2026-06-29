@@ -29,10 +29,14 @@ export function FlowerCard({
   /** Show the "SUBMIT TO CHALLENGE" control. Hybrids only — starters are never submittable. */
   showSubmit: boolean;
 }) {
-  const { canSubmit, submitFlower, submittingId, profileNeedsMigration, roundOpen } = useGame();
+  const { canSubmit, submitFlower, submittingId, profileNeedsMigration, roundOpen, hasEnteredCurrentRound } =
+    useGame();
   const r = rarityStyle(flower.rarity);
 
   const submitted = flower.status === FlowerStatus.Submitted;
+  // The player already entered THIS round (one entry per round) — every other flower's submit
+  // is locked out until the next round opens. `roundOpen` keeps this quiet between rounds.
+  const enteredAnother = hasEnteredCurrentRound && roundOpen && !submitted;
   // Entered in the OPEN round → locked out of breeding until next round (the program rejects it).
   // Status resets to Active when a new round opens, so this clears itself then.
   const locked = submitted && roundOpen;
@@ -107,25 +111,34 @@ export function FlowerCard({
             )}
           </>
         ) : (
-          <button
-            type="button"
-            onClick={onGo}
-            disabled={!goEnabled || submitting}
-            title={
-              goEnabled
-                ? "Enter this flower in the challenge"
-                : profileNeedsMigration
-                  ? "Update your garden first (see notice above)"
-                  : "No open challenge right now"
-            }
-            className={`w-full rounded-md border px-2 py-1 font-pixel text-[9px] uppercase tracking-wide transition
-              focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan
-              ${goEnabled && !submitting
-                ? "border-garden-cyan bg-garden-cyan/20 text-garden-cyan hover:bg-garden-cyan/35"
-                : "cursor-not-allowed border-garden-moss/50 bg-garden-deep/60 text-garden-parch/40"}`}
-          >
-            {submitting ? "…" : "Submit to Challenge"}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={onGo}
+              disabled={!goEnabled || submitting}
+              title={
+                goEnabled
+                  ? "Enter this flower in the challenge"
+                  : enteredAnother
+                    ? "You've already entered a flower in this round"
+                    : profileNeedsMigration
+                      ? "Update your garden first (see notice above)"
+                      : "No open challenge right now"
+              }
+              className={`w-full rounded-md border px-2 py-1 font-pixel text-[9px] uppercase tracking-wide transition
+                focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan
+                ${goEnabled && !submitting
+                  ? "border-garden-cyan bg-garden-cyan/20 text-garden-cyan hover:bg-garden-cyan/35"
+                  : "cursor-not-allowed border-garden-moss/50 bg-garden-deep/60 text-garden-parch/40"}`}
+            >
+              {submitting ? "…" : "Submit to Challenge"}
+            </button>
+            {enteredAnother && (
+              <span className="px-1 text-center font-body text-[9px] leading-tight text-garden-parch/50">
+                Already entered this round
+              </span>
+            )}
+          </>
         ))}
     </div>
   );

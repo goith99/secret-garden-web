@@ -52,6 +52,7 @@ export function HybridPot() {
     resetAfterFailure,
     newBloom,
     roundOpen,
+    hasEnteredCurrentRound,
     breedsRemaining,
     breedNotice,
     dropBlockedNotice,
@@ -255,7 +256,13 @@ export function HybridPot() {
       {/* BloomReady actions — Submit (if a round is open) + Save. Player vocabulary only. */}
       {bloomed && (
         <div className="flex w-full max-w-[15rem] flex-col items-center gap-2">
-          {roundOpen ? (
+          {roundOpen && hasEnteredCurrentRound ? (
+            // Already entered a flower this round (one entry per wallet per round) — let the
+            // player keep this bloom; submitting would be rejected on-chain.
+            <p className="text-center font-pixel text-[9px] uppercase tracking-wide text-garden-parch/50">
+              Already entered this round
+            </p>
+          ) : roundOpen ? (
             <button
               type="button"
               onClick={submitBloom}

@@ -34,7 +34,7 @@ function GameView() {
  */
 function GardenApp() {
   const { connected } = useGardener();
-  const { flowers, journal, activeRound, playerProfile, gameConfig, loading, error, refetch, profileNeedsMigration } =
+  const { flowers, journal, activeRound, playerProfile, gameConfig, loading, error, refetch, hasEnteredCurrentRound, profileNeedsMigration } =
     useGardenData();
 
   // NOTE: a pre-5D (68-byte) profile is read safely (fetchPlayerProfile decodes the old layout
@@ -62,6 +62,7 @@ function GardenApp() {
           authority: gameConfig?.authority ?? null, // gates the hidden operator panel
           breedsThisRound: playerProfile.breedsThisRound,
           lastBreedRound: playerProfile.lastBreedRound,
+          hasEnteredCurrentRound,
           profileNeedsMigration,
         }
       : {

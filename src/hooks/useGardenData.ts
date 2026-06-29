@@ -14,6 +14,7 @@ import {
   fetchActiveRound,
   fetchFlowerRecords,
   fetchGameConfig,
+  fetchHasEnteredRound,
   fetchPlayerProfile,
   isHybrid,
   type GardenConfig,
@@ -36,6 +37,12 @@ export interface GardenData {
   journal: JournalEntry[];
   loading: boolean;
   error: string | null;
+  /**
+   * True when this wallet has already submitted an entry in the current round (one entry per
+   * wallet per round on-chain). Disables every flower's "Submit to Challenge" button. Resets to
+   * false automatically when a new round opens (the new round's entry PDA doesn't exist yet).
+   */
+  hasEnteredCurrentRound: boolean;
   /** True when the connected wallet's profile is a pre-5D (68-byte) account needing migration. */
   profileNeedsMigration: boolean;
   /** Reload on-chain data. Resolves true on success, false if the fetch failed. */
@@ -66,6 +73,7 @@ const EMPTY: DataState = {
   journal: [],
   loading: true,
   error: null,
+  hasEnteredCurrentRound: false,
   profileNeedsMigration: false,
 };
 
@@ -122,6 +130,7 @@ export function useGardenData(): GardenData {
           journal: [],
           loading: false,
           error: null,
+          hasEnteredCurrentRound: false, // no wallet → no entry
           profileNeedsMigration: false,
         });
         return true;
@@ -139,6 +148,7 @@ export function useGardenData(): GardenData {
           journal: [],
           loading: false,
           error: null,
+          hasEnteredCurrentRound: false,
           profileNeedsMigration: false,
         });
         return false;
@@ -161,6 +171,7 @@ export function useGardenData(): GardenData {
           journal: [],
           loading: false,
           error: null,
+          hasEnteredCurrentRound: false,
           profileNeedsMigration: false,
         });
         return true;
@@ -174,6 +185,10 @@ export function useGardenData(): GardenData {
       const activeRound = gameConfig
         ? await fetchActiveRound(program, gameConfig.currentRound)
         : null;
+      // Has this wallet already entered the live round? (one entry per wallet per round)
+      const hasEnteredCurrentRound = activeRound
+        ? await fetchHasEnteredRound(program, owner, activeRound.roundId)
+        : false;
       if (my !== reqId.current) return false;
 
       setState({
@@ -184,6 +199,7 @@ export function useGardenData(): GardenData {
         journal: buildJournal(flowers),
         loading: false,
         error: null,
+        hasEnteredCurrentRound,
         profileNeedsMigration: playerProfile.needsMigration,
       });
       return true;
