@@ -29,17 +29,29 @@ export function FlowerCard({
   /** Show the "SUBMIT TO CHALLENGE" control. Hybrids only — starters are never submittable. */
   showSubmit: boolean;
 }) {
-  const { canSubmit, submitFlower, submittingId, profileNeedsMigration } = useGame();
+  const { canSubmit, submitFlower, submittingId, profileNeedsMigration, roundOpen } = useGame();
   const r = rarityStyle(flower.rarity);
 
+  const submitted = flower.status === FlowerStatus.Submitted;
+  // Entered in the OPEN round → locked out of breeding until next round (the program rejects it).
+  // Status resets to Active when a new round opens, so this clears itself then.
+  const locked = submitted && roundOpen;
+  const submitting = submittingId === flower.id;
+  const goEnabled = canSubmit(flower);
+
   const onDragStart = (e: DragEvent<HTMLButtonElement>) => {
+    if (locked) {
+      e.preventDefault(); // a locked flower can't be dragged to a pot
+      return;
+    }
     e.dataTransfer.setData("text/plain", flower.id);
     e.dataTransfer.effectAllowed = "copy";
   };
 
-  const submitted = flower.status === FlowerStatus.Submitted;
-  const submitting = submittingId === flower.id;
-  const goEnabled = canSubmit(flower);
+  const onActivateCard = () => {
+    if (locked) return; // tap does nothing — the tooltip below explains why
+    onActivate(flower);
+  };
 
   const onGo = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation(); // don't also trigger the card's select/place
@@ -50,15 +62,18 @@ export function FlowerCard({
     <div className="flex w-full min-w-0 flex-col gap-1">
       <button
         type="button"
-        draggable
+        draggable={!locked}
         onDragStart={onDragStart}
-        onClick={() => onActivate(flower)}
+        onClick={onActivateCard}
         aria-pressed={selected}
         className={`group flex w-full min-w-0 flex-col items-center gap-1 rounded-lg border bg-garden-deep/50 p-2 transition
           hover:-translate-y-0.5 hover:border-garden-mint focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan
           ${selected ? "border-garden-gold ring-2 ring-garden-gold/60" : "border-garden-moss/70"}`}
       >
-        <FlowerSprite flower={flower} size="md" sway />
+        {/* Mute the sprite only (not the whole card) when locked out of this round's breeding. */}
+        <span className={locked ? "opacity-75 transition-opacity" : "transition-opacity"}>
+          <FlowerSprite flower={flower} size="md" sway />
+        </span>
         {/* Name wraps to ≤2 lines (centered, hyphen-safe) — never clipped mid-word. The
             nowrap `truncate` here previously forced each card's min-content to the full
             single-line name, overflowing the grid track. */}
@@ -78,12 +93,19 @@ export function FlowerCard({
 
       {showSubmit &&
         (submitted ? (
-          <span
-            className="rounded-md border border-garden-gold/70 bg-garden-deep/80 px-2 py-1 text-center font-pixel text-[9px] uppercase tracking-wide text-garden-gold"
-            title="Already entered in the challenge"
-          >
-            Entered
-          </span>
+          <>
+            <span
+              className="rounded-md border border-garden-gold/70 bg-garden-deep/80 px-2 py-1 text-center font-pixel text-[9px] uppercase tracking-wide text-garden-gold"
+              title="Already entered in the challenge"
+            >
+              Entered
+            </span>
+            {locked && (
+              <span className="px-1 text-center font-body text-[9px] leading-tight text-garden-parch/50">
+                In this round&apos;s challenge — available next round
+              </span>
+            )}
+          </>
         ) : (
           <button
             type="button"

@@ -104,6 +104,8 @@ interface GameContextValue {
   breedError: string | null;
   /** Transient "Breeding cancelled." note under the pot after a declined breed (auto-hides). */
   breedNotice: string | null;
+  /** Transient pot-area note when an Entered (current-round) flower reaches a pot (auto-hides). */
+  dropBlockedNotice: string | null;
   journal: JournalEntry[];
   challenge: Challenge;
   winners: DailyWinner[];
@@ -192,6 +194,8 @@ export function GameProvider({
   const [migrating, setMigrating] = useState(false);
   const [migrateError, setMigrateError] = useState<string | null>(null);
   const [breedNotice, setBreedNotice] = useState<string | null>(null);
+  // Transient pot-area note shown if an Entered (this-round) flower somehow reaches a pot.
+  const [dropBlockedNotice, setDropBlockedNotice] = useState<string | null>(null);
   const [newBloom, setNewBloom] = useState<Flower | null>(null);
   const [journal, setJournal] = useState<JournalEntry[]>(initial?.journal ?? MOCK_JOURNAL);
   const [activeTab, setActiveTab] = useState<MobileTab>("garden");
@@ -248,6 +252,13 @@ export function GameProvider({
     return () => window.clearTimeout(t);
   }, [breedNotice]);
 
+  // The "this flower is in the current challenge" note auto-hides after 2s.
+  useEffect(() => {
+    if (!dropBlockedNotice) return;
+    const t = window.setTimeout(() => setDropBlockedNotice(null), 2000);
+    return () => window.clearTimeout(t);
+  }, [dropBlockedNotice]);
+
   // Reset breeding state whenever the wallet changes or disconnects (and on first mount), so
   // every wallet session starts with a clean Hybrid Pot — never a stale "BLOOM FAILED" from a
   // previously rejected breed under a different wallet. Reacting to the wallet (an external
@@ -260,6 +271,7 @@ export function GameProvider({
     setNewBloom(null); // drop any finished/failed bloom
     setBreedError(null); // clear any pending breed error
     setBreedNotice(null); // clear the transient "cancelled" note
+    setDropBlockedNotice(null); // clear the transient "in the challenge" note
     setMigrateError(null); // clear any update-notice error
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [address, connected]);
@@ -273,17 +285,27 @@ export function GameProvider({
     setSelectedFlowerId((cur) => (cur === id ? null : id));
   }, []);
 
-  const placeInPot = useCallback((pot: PotId, flower: Flower) => {
-    // A flower can't occupy both pots; if it's in the other pot, vacate that one.
-    if (pot === "A") {
-      setPotB((b) => (b?.id === flower.id ? null : b));
-      setPotA(flower);
-    } else {
-      setPotA((a) => (a?.id === flower.id ? null : a));
-      setPotB(flower);
-    }
-    setSelectedFlowerId(null);
-  }, []);
+  const placeInPot = useCallback(
+    (pot: PotId, flower: Flower) => {
+      // A flower entered in the OPEN round can't breed until the next round (the program would
+      // reject it). The card blocks drag/tap up front; this guards any path that slips through
+      // (e.g. a stray drop) and surfaces a brief pot-area note.
+      if (flower.status === FlowerStatus.Submitted && roundOpen) {
+        setDropBlockedNotice("This flower is in the current challenge");
+        return;
+      }
+      // A flower can't occupy both pots; if it's in the other pot, vacate that one.
+      if (pot === "A") {
+        setPotB((b) => (b?.id === flower.id ? null : b));
+        setPotA(flower);
+      } else {
+        setPotA((a) => (a?.id === flower.id ? null : a));
+        setPotB(flower);
+      }
+      setSelectedFlowerId(null);
+    },
+    [roundOpen],
+  );
 
   const autoPlace = useCallback(
     (flower: Flower): PotId | null => {
@@ -599,6 +621,7 @@ export function GameProvider({
       breedsRemaining,
       breedError,
       breedNotice,
+      dropBlockedNotice,
       journal,
       challenge,
       winners,
@@ -628,7 +651,7 @@ export function GameProvider({
     }),
     [
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
-      newBloom, roundOpen, breedsRemaining, breedError, breedNotice, journal, challenge, winners, activeTab, submittingId,
+      newBloom, roundOpen, breedsRemaining, breedError, breedNotice, dropBlockedNotice, journal, challenge, winners, activeTab, submittingId,
       bloomToast, authority, profileNeedsMigration, migrating, migrateError, migrateProfile, refetchGarden,
       selectFlower, placeInPot, autoPlace, clearPot,
       setEnvironment, startCrossbreed, collectBloom, submitBloom, resetAfterFailure, canSubmit,
