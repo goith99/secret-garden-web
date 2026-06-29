@@ -33,20 +33,20 @@ export function StarterGarden() {
   };
 
   return (
-    <div className="gh-scroll pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-end justify-around gap-1 overflow-x-auto px-2 pb-3 md:px-5 md:pb-4">
+    <div className="gh-scroll pointer-events-none flex shrink-0 items-end justify-around gap-1 overflow-x-auto px-2 pb-1 md:px-5">
       {starters.map((f) => {
         const planted = inPot.has(f.id);
         const selected = selectedFlowerId === f.id;
         const name = speciesOf(f.visualSpeciesId).name;
         return (
-          <div key={f.id} className="flex w-[6rem] shrink-0 flex-col items-center gap-1">
+          <div key={f.id} className="flex w-[4.5rem] shrink-0 flex-col items-center gap-0.5">
             {planted ? (
               // dashed "empty plot" left behind while this starter is in a pot
               <div
-                className="flex h-[72px] w-[72px] items-center justify-center rounded-xl border border-dashed border-garden-moss/70"
+                className="flex h-12 w-12 items-center justify-center rounded-xl border border-dashed border-garden-moss/70"
                 aria-hidden
               >
-                <span className="font-pixel text-[9px] uppercase tracking-wide text-garden-parch/40">
+                <span className="font-pixel text-[8px] uppercase tracking-wide text-garden-parch/40">
                   potted
                 </span>
               </div>
@@ -61,11 +61,11 @@ export function StarterGarden() {
                 className={`pointer-events-auto rounded-xl p-1 transition hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan
                   ${selected ? "ring-2 ring-garden-gold/70" : ""}`}
               >
-                <FlowerSprite flower={f} size="lg" sway />
+                <FlowerSprite flower={f} size="xs" sway />
               </button>
             )}
             <span
-              className={`line-clamp-2 w-full break-words text-center font-pixel text-xs leading-tight tracking-tight
+              className={`line-clamp-2 w-full break-words text-center font-pixel text-[10px] leading-tight tracking-tight
                 ${planted ? "text-garden-parch/30" : "text-garden-cream/85"}`}
             >
               {name}
