@@ -9,7 +9,7 @@ import { useGame } from "../game/GameContext";
  * as current, and this notice disappears; on reject it stays so the player can retry later.
  */
 export function MigrationNotice() {
-  const { profileNeedsMigration, migrating, migrateProfile } = useGame();
+  const { profileNeedsMigration, migrating, migrateError, migrateProfile } = useGame();
   const [dismissed, setDismissed] = useState(false);
 
   if (!profileNeedsMigration || dismissed) return null;
@@ -34,6 +34,9 @@ export function MigrationNotice() {
               />
               Updating your garden…
             </span>
+          ) : migrateError ? (
+            // Declined/failed update — keep the bar up with the reason; tapping the bar retries.
+            <span className="underline decoration-garden-gold/40">{migrateError}</span>
           ) : (
             <>
               Your garden needs a quick update before you can breed or submit.{" "}

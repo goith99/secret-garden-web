@@ -96,7 +96,9 @@ function classifyError(e: unknown): TxError {
   const code = (e as { code?: number })?.code;
   const lower = msg.toLowerCase();
 
-  // Wallet popup closed / user declined — treat as a no-op cancel (caller shows nothing).
+  // Wallet popup closed / user declined — treat as a no-op cancel (caller shows nothing or a
+  // gentle "cancelled" note). Phantom reports "User rejected …"; Solflare "Transaction
+  // cancelled" or EIP-1193 code 4001. Anything else is a genuine failure (handled below).
   if (
     code === 4001 ||
     name.includes("WalletSignTransaction") ||
@@ -104,6 +106,7 @@ function classifyError(e: unknown): TxError {
     lower.includes("user rejected") ||
     lower.includes("user denied") ||
     lower.includes("rejected the request") ||
+    lower.includes("transaction cancelled") ||
     lower.includes("cancelled") ||
     lower.includes("canceled")
   ) {
@@ -219,6 +222,11 @@ export interface StartBreedingResult {
 export interface GardenActions {
   /** True once a wallet + program are connected and transactions can be sent. */
   ready: boolean;
+  /**
+   * Create the PlayerProfile PDA (step 1 of first-time setup). Idempotent: resolves immediately
+   * if the profile already exists, so a retry after a partial setup only does what's left.
+   */
+  createProfile: () => Promise<void>;
   claimStarters: () => Promise<string>;
   startBreeding: (args: {
     flowerAIndex: number;
@@ -278,6 +286,22 @@ export function useGardenActions(): GardenActions {
       .accountsPartial({ owner: publicKey, profile: profilePda(publicKey) })
       .transaction();
     return submit(tx);
+  }, [program, publicKey, submit]);
+
+  // Step 1 of first-time setup: create the PlayerProfile PDA. Idempotent — if it already
+  // exists (e.g. the player got past step 1 but cancelled the claim), this resolves without a
+  // transaction so a retry only does the claim. Exposed so the UI can show a 2-step progress.
+  const createProfile = useCallback(async (): Promise<void> => {
+    if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
+    const owner = publicKey;
+    const profile = profilePda(owner);
+    const existing = await program.account.playerProfile.fetchNullable(profile);
+    if (existing) return; // already set up — nothing to sign
+    const tx = await program.methods
+      .createProfile()
+      .accountsPartial({ owner, config: configPda(), profile })
+      .transaction();
+    await submit(tx);
   }, [program, publicKey, submit]);
 
   const claimStarters = useCallback(async (): Promise<string> => {
@@ -438,6 +462,7 @@ export function useGardenActions(): GardenActions {
   return useMemo(
     () => ({
       ready,
+      createProfile,
       claimStarters,
       startBreeding,
       submitEntry,
@@ -445,7 +470,7 @@ export function useGardenActions(): GardenActions {
       pollBreeding,
       fetchFlower: fetchFlowerRecord,
     }),
-    [ready, claimStarters, startBreeding, submitEntry, migrateProfile, pollBreeding, fetchFlowerRecord],
+    [ready, createProfile, claimStarters, startBreeding, submitEntry, migrateProfile, pollBreeding, fetchFlowerRecord],
   );
 }
 

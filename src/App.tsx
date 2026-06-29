@@ -11,6 +11,7 @@ import { DesktopLayout } from "./layouts/DesktopLayout";
 import { MobileLayout } from "./layouts/MobileLayout";
 import { GardenEmpty, GardenError, GardenLoading } from "./screens/GardenStates";
 import { HowToPlayModal } from "./components/HowToPlayModal";
+import { ToastProvider } from "./components/Toast";
 import { MOCK_STARTERS } from "./mocks/data";
 
 /**
@@ -111,9 +112,11 @@ export default function App() {
   return (
     <AppWalletProvider>
       <NetworkGuardProvider>
-        <ConnectWalletProvider>
-          <Gate />
-        </ConnectWalletProvider>
+        <ToastProvider>
+          <ConnectWalletProvider>
+            <Gate />
+          </ConnectWalletProvider>
+        </ToastProvider>
       </NetworkGuardProvider>
     </AppWalletProvider>
   );

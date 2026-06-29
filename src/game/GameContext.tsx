@@ -37,6 +37,7 @@ import {
 import { MOCK_FLOWERS, MOCK_JOURNAL, MOCK_CHALLENGE, MOCK_WINNERS } from "../mocks/data";
 import { useGardenActions, TxError } from "../program/transactions";
 import { useGardener } from "../wallet/useGardener";
+import { useToast } from "../components/Toast";
 
 const INSUFFICIENT_SOL_MSG =
   "Your garden needs a little more SOL to grow. Add funds and try again.";
@@ -101,6 +102,8 @@ interface GameContextValue {
   breedsRemaining: number;
   /** Player-vocabulary breeding problem (e.g. low SOL) shown under the crossbreed CTA. */
   breedError: string | null;
+  /** Transient "Breeding cancelled." note under the pot after a declined breed (auto-hides). */
+  breedNotice: string | null;
   journal: JournalEntry[];
   challenge: Challenge;
   winners: DailyWinner[];
@@ -115,6 +118,8 @@ interface GameContextValue {
   profileNeedsMigration: boolean;
   /** True while the one-time migrate transaction is in flight (notice shows a spinner). */
   migrating: boolean;
+  /** Notice message after a declined/failed update (cancelled / failed); null otherwise. */
+  migrateError: string | null;
   /** Player taps the "update your garden" notice → run the one-time migrate, then refresh. */
   migrateProfile: () => void;
   /** Reload on-chain garden data (operator panel uses it after each authority action). */
@@ -165,6 +170,7 @@ export function GameProvider({
 }) {
   const actions = useGardenActions();
   const { connected, address } = useGardener();
+  const toast = useToast();
   // Guards setState in the async breeding/refetch flows from running after unmount (avoids
   // an unhandled-rejection / "set state on unmounted" race when polling + refetch overlap).
   const mounted = useRef(true);
@@ -184,6 +190,8 @@ export function GameProvider({
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [bloomToast, setBloomToast] = useState<string | null>(null);
   const [migrating, setMigrating] = useState(false);
+  const [migrateError, setMigrateError] = useState<string | null>(null);
+  const [breedNotice, setBreedNotice] = useState<string | null>(null);
   const [newBloom, setNewBloom] = useState<Flower | null>(null);
   const [journal, setJournal] = useState<JournalEntry[]>(initial?.journal ?? MOCK_JOURNAL);
   const [activeTab, setActiveTab] = useState<MobileTab>("garden");
@@ -233,6 +241,13 @@ export function GameProvider({
   }, []);
   useEffect(() => clearTimers, [clearTimers]); // clear pending timers on unmount
 
+  // The "Breeding cancelled." note under the pot is transient — auto-hide it after 3s.
+  useEffect(() => {
+    if (!breedNotice) return;
+    const t = window.setTimeout(() => setBreedNotice(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [breedNotice]);
+
   // Reset breeding state whenever the wallet changes or disconnects (and on first mount), so
   // every wallet session starts with a clean Hybrid Pot — never a stale "BLOOM FAILED" from a
   // previously rejected breed under a different wallet. Reacting to the wallet (an external
@@ -244,6 +259,8 @@ export function GameProvider({
     setPotB(null); // clear Parent B
     setNewBloom(null); // drop any finished/failed bloom
     setBreedError(null); // clear any pending breed error
+    setBreedNotice(null); // clear the transient "cancelled" note
+    setMigrateError(null); // clear any update-notice error
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [address, connected]);
 
@@ -333,7 +350,8 @@ export function GameProvider({
 
     const parentA = potA;
     const parentB = potB;
-    setActivePhase("Confirm");
+    setBreedNotice(null);
+    setActivePhase("Confirm"); // "Waiting for approval…" until the wallet signs
     void (async () => {
       try {
         const { experiment, offspringIndex } = await actions.startBreeding({
@@ -353,17 +371,26 @@ export function GameProvider({
           setNewBloom(bloom);
           setActivePhase("BloomReady");
         } else {
+          setBreedError(
+            outcome === "timeout"
+              ? "Bloom Failed. The garden timed out. Try again."
+              : "Something went wrong during breeding. Try again.",
+          );
           setActivePhase("Failed");
         }
       } catch (e) {
         if (!mounted.current) return;
         if (e instanceof TxError && e.kind === "rejected") {
-          setActivePhase(null); // wallet declined — silently return to Ready
+          // Declined: keep the flowers in the pots, drop back to Ready, show a fading note.
+          setActivePhase(null);
+          setBreedNotice("Breeding cancelled.");
         } else {
           if (e instanceof TxError && e.kind === "insufficient") {
             setBreedError(INSUFFICIENT_SOL_MSG);
           } else if (e instanceof TxError && e.kind === "network") {
             setBreedError(e.message);
+          } else {
+            setBreedError("Something went wrong during breeding. Try again.");
           }
           setActivePhase("Failed");
         }
@@ -447,13 +474,17 @@ export function GameProvider({
         await actions.submitEntry({ roundId: challenge.roundId, flowerRecord: bloom.id });
         if (!mounted.current) return;
         resetAndRefetch(); // entered on-chain; now save + refresh as usual
-      } catch {
-        // Wallet declined or tx failed: stay at BloomReady so the player can retry or save.
+      } catch (e) {
+        // Stay at BloomReady so the player can retry or save. Declined → nothing; a real
+        // failure → a toast so the player knows the entry didn't go through.
+        if (!(e instanceof TxError && e.kind === "rejected")) {
+          toast.error("Couldn't submit to challenge. Try again.");
+        }
       } finally {
         if (mounted.current) setSubmittingId(null);
       }
     })();
-  }, [activePhase, newBloom, onRefetch, actions, challenge.roundId, resetAndRefetch, mockCollect]);
+  }, [activePhase, newBloom, onRefetch, actions, challenge.roundId, resetAndRefetch, mockCollect, toast]);
 
   const resetAfterFailure = useCallback(() => {
     clearTimers();
@@ -494,15 +525,18 @@ export function GameProvider({
             ),
           );
           void onRefetch();
-        } catch {
-          // Wallet declined or tx failed: leave the flower Active (no error surfaced here —
-          // the GO button simply stays available for another try).
+        } catch (e) {
+          // Leave the flower Active so the GO button stays available. Declined → show nothing;
+          // a real failure → a toast so the player knows it didn't go through.
+          if (!(e instanceof TxError && e.kind === "rejected")) {
+            toast.error("Couldn't submit to challenge. Try again.");
+          }
         } finally {
           if (mounted.current) setSubmittingId(null);
         }
       })();
     },
-    [onRefetch, canSubmit, actions, challenge.roundId],
+    [onRefetch, canSubmit, actions, challenge.roundId, toast],
   );
 
   // Bloom toast tap: try the refresh again; clear the toast once the garden reloads.
@@ -525,18 +559,26 @@ export function GameProvider({
   const migrateProfile = useCallback(() => {
     if (!onRefetch || migrating || !profileNeedsMigration) return;
     setMigrating(true);
+    setMigrateError(null);
     void (async () => {
       try {
         await actions.migrateProfile();
         if (!mounted.current) return;
-        await onRefetch();
-      } catch {
-        /* declined or failed — notice stays visible so the player can try again later */
+        await onRefetch(); // profile reads as current → notice clears, breed/submit re-enable
+        if (mounted.current) toast.success("Your garden is up to date! 🌱");
+      } catch (e) {
+        // Notice stays visible (profileNeedsMigration is still true) with a fitting message.
+        if (!mounted.current) return;
+        setMigrateError(
+          e instanceof TxError && e.kind === "rejected"
+            ? "Update cancelled. Tap to try again."
+            : "Update failed. Check your connection and try again.",
+        );
       } finally {
         if (mounted.current) setMigrating(false);
       }
     })();
-  }, [onRefetch, migrating, profileNeedsMigration, actions]);
+  }, [onRefetch, migrating, profileNeedsMigration, actions, toast]);
 
   const value = useMemo<GameContextValue>(
     () => ({
@@ -553,6 +595,7 @@ export function GameProvider({
       roundOpen,
       breedsRemaining,
       breedError,
+      breedNotice,
       journal,
       challenge,
       winners,
@@ -562,6 +605,7 @@ export function GameProvider({
       authority,
       profileNeedsMigration,
       migrating,
+      migrateError,
       migrateProfile,
       refetchGarden,
       setActiveTab,
@@ -581,8 +625,8 @@ export function GameProvider({
     }),
     [
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
-      newBloom, roundOpen, breedsRemaining, breedError, journal, challenge, winners, activeTab, submittingId,
-      bloomToast, authority, profileNeedsMigration, migrating, migrateProfile, refetchGarden,
+      newBloom, roundOpen, breedsRemaining, breedError, breedNotice, journal, challenge, winners, activeTab, submittingId,
+      bloomToast, authority, profileNeedsMigration, migrating, migrateError, migrateProfile, refetchGarden,
       selectFlower, placeInPot, autoPlace, clearPot,
       setEnvironment, startCrossbreed, collectBloom, submitBloom, resetAfterFailure, canSubmit,
       submitFlower, retryRefresh, simulateFailure,
