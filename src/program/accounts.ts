@@ -273,6 +273,24 @@ export async function fetchActiveRound(
   return acc ? mapRound(acc) : null;
 }
 
+/**
+ * Whether this wallet has ALREADY submitted an entry in the given round. The CompetitionEntry
+ * PDA is seeded by [round, player] (see entryPda / the submit_entry seeds in the IDL), so a
+ * single wallet can hold at most one entry per round — its mere existence means "entered".
+ * Returns false when no round is open (roundId ≤ 0) or the entry account doesn't exist yet,
+ * so a fresh round (new round_id → new, non-existent PDA) reads as not-entered automatically.
+ */
+export async function fetchHasEnteredRound(
+  program: SecretGardenProgram,
+  owner: PublicKey,
+  roundId: number,
+): Promise<boolean> {
+  if (roundId <= 0) return false; // no round open → nothing to enter
+  const entry = entryPda(roundPda(roundId), owner);
+  const acc = await program.account.competitionEntry.fetchNullable(entry);
+  return acc !== null;
+}
+
 /** A hybrid (sealed genome) is one breeding result; build the Hybrid Journal from them. */
 export function isHybrid(f: Flower): boolean {
   return f.genomeStatus === GenomeStatus.Encrypted || f.visualSpeciesId === 255;

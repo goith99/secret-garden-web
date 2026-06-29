@@ -77,6 +77,12 @@ export interface GardenInitial {
   /** Breeding attempts used this round + the round they counted toward (from PlayerProfile). */
   breedsThisRound?: number;
   lastBreedRound?: number;
+  /**
+   * True when this wallet has already submitted an entry in the current round. On-chain a wallet
+   * can hold at most one entry per round, so every flower's "Submit to Challenge" must disable
+   * once this is true. Resets when a new round opens. See useGardenData.hasEnteredCurrentRound.
+   */
+  hasEnteredCurrentRound?: boolean;
   /** True when the connected wallet's profile is pre-5D and must be migrated before breed/submit. */
   profileNeedsMigration?: boolean;
 }
@@ -98,6 +104,11 @@ interface GameContextValue {
   newBloom: Flower | null;
   /** True when a competition round is currently Open (drives the bloom's submit button). */
   roundOpen: boolean;
+  /**
+   * True when the player has already submitted an entry in the current round. While true, every
+   * "Submit to Challenge" control is disabled (one entry per wallet per round on-chain).
+   */
+  hasEnteredCurrentRound: boolean;
   /** How many crosses the player can still start this round (5 when standalone/no profile). */
   breedsRemaining: number;
   /** Player-vocabulary breeding problem (e.g. low SOL) shown under the crossbreed CTA. */
@@ -204,6 +215,8 @@ export function GameProvider({
   const challenge = initial?.challenge ?? MOCK_CHALLENGE;
   const winners = initial?.winners ?? MOCK_WINNERS;
   const roundOpen = challenge.roundId > 0 && challenge.status === RoundStatus.Open;
+  // One entry per wallet per round on-chain — once entered, every Submit control is disabled.
+  const hasEnteredCurrentRound = initial?.hasEnteredCurrentRound ?? false;
   const authority = initial?.authority ?? null;
 
   // Breeds remaining this round. The on-chain counter is stale once the round advances:
@@ -523,17 +536,19 @@ export function GameProvider({
     setActivePhase("Failed");
   }, [clearTimers]);
 
-  // GO (submit_entry): only when a real round is Open, this flower is still Active, AND the
-  // profile is current (a pre-5D profile must be migrated first — see migrateProfile).
+  // GO (submit_entry): only when a real round is Open, this flower is still Active, the player
+  // hasn't ALREADY entered this round (one entry per wallet per round — the program rejects a
+  // second), AND the profile is current (a pre-5D profile must be migrated first).
   const canSubmit = useCallback(
     (flower: Flower): boolean =>
       !!onRefetch &&
       !profileNeedsMigration &&
+      !hasEnteredCurrentRound &&
       challenge.roundId > 0 &&
       challenge.status === RoundStatus.Open &&
       flower.status === FlowerStatus.Active &&
       submittingId === null,
-    [onRefetch, profileNeedsMigration, challenge.roundId, challenge.status, submittingId],
+    [onRefetch, profileNeedsMigration, hasEnteredCurrentRound, challenge.roundId, challenge.status, submittingId],
   );
 
   const submitFlower = useCallback(
@@ -618,6 +633,7 @@ export function GameProvider({
       isCycling,
       newBloom,
       roundOpen,
+      hasEnteredCurrentRound,
       breedsRemaining,
       breedError,
       breedNotice,
@@ -651,7 +667,7 @@ export function GameProvider({
     }),
     [
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
-      newBloom, roundOpen, breedsRemaining, breedError, breedNotice, dropBlockedNotice, journal, challenge, winners, activeTab, submittingId,
+      newBloom, roundOpen, hasEnteredCurrentRound, breedsRemaining, breedError, breedNotice, dropBlockedNotice, journal, challenge, winners, activeTab, submittingId,
       bloomToast, authority, profileNeedsMigration, migrating, migrateError, migrateProfile, refetchGarden,
       selectFlower, placeInPot, autoPlace, clearPot,
       setEnvironment, startCrossbreed, collectBloom, submitBloom, resetAfterFailure, canSubmit,
