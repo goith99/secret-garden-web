@@ -25,9 +25,9 @@ import {
  * an image-generation API key is configured. See the Stage 6A discovery notes — these are
  * deliberately lightweight (inline SVG paths, no image downloads) until then.
  */
-export type SpriteSize = "sm" | "md" | "lg";
+export type SpriteSize = "xs" | "sm" | "md" | "lg";
 
-const PX: Record<SpriteSize, number> = { sm: 44, md: 64, lg: 92 };
+const PX: Record<SpriteSize, number> = { xs: 48, sm: 44, md: 64, lg: 92 };
 
 // shared thin outline that gives the flat shapes a little definition
 const EDGE = "rgba(0,0,0,0.18)";

@@ -32,17 +32,24 @@ export function Greenhouse() {
           always stays fully visible at 100% zoom (1366×768) — no scroll, no cut-off. */}
       <div className="relative min-h-[200px] flex-1 overflow-hidden rounded-xl border border-garden-moss/70 bg-garden-deep/40 shadow-panel">
         <NightGardenScene />
-        <StarterGarden />
 
-        {/* Pot row — floats in the UPPER half of the scene, clearly above the starter row in
-            the lower half (no overlap at any zoom). The layer ignores pointer events so
-            starters below it stay draggable; the pots opt back in. */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex h-1/2 items-center justify-center px-3">
-          <div className="pointer-events-auto flex items-end justify-center gap-2 [filter:drop-shadow(0_16px_18px_rgba(0,0,0,0.45))] md:gap-4 xl:gap-6">
-            <ParentPot pot="A" label="Parent A" />
-            <HybridPot />
-            <ParentPot pot="B" label="Parent B" />
+        {/* Foreground play layer: pots in a top band, starters in a bottom band. A flex column
+            with justify-between keeps the two bands apart at ANY scene height, so filled /
+            BloomReady pots never collide with the starter row (the old absolute top-half + bottom
+            layers overlapped at 1366×768). The layer passes pointer events through to the scene;
+            the pots and starters opt back in. */}
+        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col justify-between gap-2 px-3 py-2">
+          {/* Pot row (top band) — fixed min-height so it always reserves space. */}
+          <div className="flex min-h-[7rem] shrink-0 items-end justify-center">
+            <div className="pointer-events-auto flex items-end justify-center gap-2 [filter:drop-shadow(0_16px_18px_rgba(0,0,0,0.45))] md:gap-4 xl:gap-6">
+              <ParentPot pot="A" label="Parent A" />
+              <HybridPot />
+              <ParentPot pot="B" label="Parent B" />
+            </div>
           </div>
+
+          {/* Starter flowers (bottom band) */}
+          <StarterGarden />
         </div>
       </div>
 
