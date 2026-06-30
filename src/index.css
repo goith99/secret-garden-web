@@ -58,3 +58,83 @@
     @apply rounded-full bg-garden-moss;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Landing-page ambience. Slow, calm, low-contrast animations used ONLY on the
+   public marketing page (LandingPage.tsx) to illustrate gameplay in place of
+   screenshots. All are pure CSS, so the global prefers-reduced-motion rule in
+   @layer base above neutralises them automatically — each keyframe shares its
+   0%/100% with a calm static end state so nothing disappears when motion is off.
+   --------------------------------------------------------------------------- */
+
+/* Hero flower: a very gentle breathing scale + opacity pulse. */
+@keyframes sg-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.82; }
+  50%      { transform: scale(1.06); opacity: 1; }
+}
+.sg-breathe {
+  animation: sg-breathe 4.5s ease-in-out infinite;
+}
+
+/* Hero pollen/firefly particles drifting slowly upward and fading. Per-particle
+   duration/delay are set inline so the handful never move in unison. */
+@keyframes sg-pollen {
+  0%   { transform: translateY(0); opacity: 0; }
+  15%  { opacity: 0.5; }
+  85%  { opacity: 0.5; }
+  100% { transform: translateY(-300px); opacity: 0; }
+}
+.sg-pollen {
+  animation-name: sg-pollen;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* "Breed" card: two petals drifting toward a glowing core and back, on a loop. */
+@keyframes sg-merge-left {
+  0%, 100% { transform: translateX(0); opacity: 0.6; }
+  50%      { transform: translateX(7px) scale(1.05); opacity: 1; }
+}
+@keyframes sg-merge-right {
+  0%, 100% { transform: translateX(0); opacity: 0.6; }
+  50%      { transform: translateX(-7px) scale(1.05); opacity: 1; }
+}
+@keyframes sg-merge-core {
+  0%, 100% { transform: scale(0.5); opacity: 0.25; }
+  50%      { transform: scale(1.25); opacity: 0.9; }
+}
+.sg-merge-left  { animation: sg-merge-left 4s ease-in-out infinite; }
+.sg-merge-right { animation: sg-merge-right 4s ease-in-out infinite; }
+.sg-merge-core  { animation: sg-merge-core 4s ease-in-out infinite; }
+
+/* "Compete" card: a soft gold glow pulse on the trophy. */
+@keyframes sg-trophy-glow {
+  0%, 100% { filter: drop-shadow(0 0 2px rgba(230, 194, 92, 0.4)); transform: scale(1); }
+  50%      { filter: drop-shadow(0 0 10px rgba(230, 194, 92, 0.85)); transform: scale(1.05); }
+}
+.sg-trophy-glow {
+  animation: sg-trophy-glow 3.5s ease-in-out infinite;
+}
+
+/* "Privacy" card: a subtle shine sweep across the lock, like an encrypted shimmer. */
+.sg-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.sg-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    transparent 35%,
+    rgba(245, 239, 218, 0.4) 50%,
+    transparent 65%
+  );
+  transform: translateX(-150%);
+  animation: sg-shine 4.5s ease-in-out infinite;
+}
+@keyframes sg-shine {
+  0%        { transform: translateX(-150%); }
+  55%, 100% { transform: translateX(150%); }
+}
