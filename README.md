@@ -3,7 +3,7 @@
 A cozy botanical night garden where you crossbreed flowers to win daily challenges.
 Built on Solana Devnet with Arcium MPC for private genome breeding.
 
-🌸 **Live**: https://secret-garden-web-app.vercel.app
+🌸 **Live**: https://gardenprotocol.xyz
 📦 **Program repo**: https://github.com/goith99/secret-garden
 
 ## What it does
