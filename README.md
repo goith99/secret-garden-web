@@ -42,7 +42,7 @@ npm run lint     # eslint
 1. Install [Phantom](https://phantom.app) or Solflare wallet
 2. Switch wallet network to **Devnet**
 3. Get free devnet SOL at [faucet.solana.com](https://faucet.solana.com)
-4. Open https://secret-garden-web-app.vercel.app
+4. Open https://gardenprotocol.xyz
 5. Connect wallet → drag two flowers into the pots → crossbreed!
 
 ## Privacy design
