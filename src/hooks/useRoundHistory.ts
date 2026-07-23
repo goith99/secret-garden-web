@@ -58,6 +58,29 @@ export async function fetchLatestWinners(roundNumber: number): Promise<RoundWinn
   }));
 }
 
+/**
+ * The most recent completed round's Top 3 — i.e. the highest `round_number` that exists in
+ * `round_winners`, regardless of which round is currently open. This is what Daily Winners shows:
+ * even during a fresh, unrevealed round the previous round's results stay on screen. Returns a
+ * `roundNumber` of 0 with empty winners when Supabase is unconfigured or no round has been saved.
+ */
+export async function fetchLatestRoundWinners(): Promise<{
+  roundNumber: number;
+  winners: RoundWinner[];
+}> {
+  if (!supabase) return { roundNumber: 0, winners: [] };
+  const { data, error } = await supabase
+    .from("round_winners")
+    .select("round_number")
+    .order("round_number", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+    .overrideTypes<{ round_number: number }, { merge: false }>();
+  if (error || !data) return { roundNumber: 0, winners: [] };
+  const winners = await fetchLatestWinners(data.round_number);
+  return { roundNumber: data.round_number, winners };
+}
+
 /** A round's stored summary (target traits, entrant count). Null when unconfigured or absent. */
 export async function fetchRoundResults(roundNumber: number): Promise<RoundResults | null> {
   if (!supabase || roundNumber <= 0) return null;
@@ -84,33 +107,40 @@ export async function fetchRoundResults(roundNumber: number): Promise<RoundResul
 }
 
 /**
- * Live Daily-Winners data for one round number. Refetches whenever the round changes; returns
- * empty winners (and `loading`) when Supabase isn't configured or no reveal has been saved yet.
+ * Live Daily-Winners data: the most recent completed round's Top 3. `refreshKey` is a value that
+ * changes when the active round advances (pass `challenge.roundId`) so newly-revealed results get
+ * picked up; the query itself always targets the highest round present, not the active one.
+ *
+ * Returns empty winners with `roundNumber: 0` when Supabase isn't configured or no reveal has been
+ * saved yet. `loading` is true only while the initial/refetch request is in flight.
  */
-export function useRoundHistory(roundNumber: number): {
+export function useLatestWinners(refreshKey: number): {
   winners: RoundWinner[];
+  roundNumber: number;
   loading: boolean;
 } {
   const [winners, setWinners] = useState<RoundWinner[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [roundNumber, setRoundNumber] = useState(0);
+  const [loading, setLoading] = useState(supabase !== null);
 
   useEffect(() => {
     let cancelled = false;
-    if (!supabase || roundNumber <= 0) {
+    if (!supabase) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setWinners([]);
+      setLoading(false);
       return;
     }
     setLoading(true);
-    void fetchLatestWinners(roundNumber).then((w) => {
+    void fetchLatestRoundWinners().then((result) => {
       if (cancelled) return;
-      setWinners(w);
+      setWinners(result.winners);
+      setRoundNumber(result.roundNumber);
       setLoading(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [roundNumber]);
+  }, [refreshKey]);
 
-  return { winners, loading };
+  return { winners, roundNumber, loading };
 }

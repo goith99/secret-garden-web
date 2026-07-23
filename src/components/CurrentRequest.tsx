@@ -1,6 +1,6 @@
 import { useGame } from "../game/GameContext";
 import { Badge } from "./Badge";
-import { roundStatusLabel, traitName } from "../mocks/presentation";
+import { roundStatusLabel, traitName } from "../lib/presentation";
 
 function hoursLeft(endTime: number): string {
   const secs = endTime - Math.floor(Date.now() / 1000);

@@ -2,7 +2,7 @@ import { useState, type DragEvent } from "react";
 import type { Flower, PotId } from "../types";
 import { useGame } from "../game/GameContext";
 import { FlowerSprite } from "./FlowerSprite";
-import { flowerLabel } from "../mocks/presentation";
+import { flowerLabel } from "../lib/presentation";
 
 /**
  * A Parent Pot accepts a flower via two routes:

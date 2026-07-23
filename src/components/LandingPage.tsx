@@ -135,6 +135,9 @@ function Reveal({
       "(prefers-reduced-motion: reduce)",
     ).matches;
     if (prefersReduced || typeof IntersectionObserver === "undefined") {
+      // No observer to react to (reduced-motion or unsupported), so reveal immediately —
+      // a one-shot init to the visible state, not a render-driven loop.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setInView(true);
       return;
     }

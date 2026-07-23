@@ -6,7 +6,7 @@ import {
   experimentStatusLabel,
   rarity as rarityStyle,
   speciesOf,
-} from "../mocks/presentation";
+} from "../lib/presentation";
 import { ExperimentStatus, type JournalEntry } from "../types";
 
 function shortName(species: number): string {

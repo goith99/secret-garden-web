@@ -4,7 +4,7 @@ import { useGame } from "../game/GameContext";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { isHybrid } from "../program/accounts";
 import { FlowerSprite } from "./FlowerSprite";
-import { speciesOf } from "../mocks/presentation";
+import { speciesOf } from "../lib/presentation";
 
 /**
  * The 6 starter flowers, planted in a single row growing from the greenhouse floor. These are

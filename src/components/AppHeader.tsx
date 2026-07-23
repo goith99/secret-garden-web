@@ -5,7 +5,7 @@ import { useConnectWallet } from "../wallet/ConnectWalletContext";
 import { Badge } from "./Badge";
 import { GardenerMenu } from "./GardenerMenu";
 import { OperatorPanel } from "./OperatorPanel";
-import { roundStatusLabel } from "../mocks/presentation";
+import { roundStatusLabel } from "../lib/presentation";
 
 /** Slim brand bar. Kept short so the desktop main view fits one screen without scrolling. */
 export function AppHeader({ compact = false }: { compact?: boolean }) {

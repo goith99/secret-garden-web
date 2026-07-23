@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 import type { Flower } from "../types";
 import { GenomeStatus } from "../types";
-import { speciesOf, rarity as rarityStyle, type SpeciesSkin } from "../mocks/presentation";
+import { speciesOf, rarity as rarityStyle, type SpeciesSkin } from "../lib/presentation";
 import {
   decodeTraitMask,
   paletteFor,

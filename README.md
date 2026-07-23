@@ -13,6 +13,12 @@ Built on Solana Devnet with Arcium MPC for private genome breeding.
 - Crossbreed via Arcium MPC — your flower's genome stays encrypted and private
 - Daily competition rounds with hidden scoring — no one knows your score until reveal
 - Top 3 winners revealed by MPC at round end
+- Daily Winners panel showing finished-round results (backed by Supabase)
+- Breeds-remaining indicator that enforces the per-round breeding limit
+- Profile migration notice that guides you through `migrate_profile` when the
+  on-chain profile schema changes
+- Toast notifications for transaction and breeding status
+- Operator panel for round management (visible only to the operator wallet)
 
 ## Stack
 
@@ -50,7 +56,6 @@ score fabrication is cryptographically impossible.
 
 - Flower visuals are SVG placeholders — pixel art assets coming later
 - Trait names #8 and #9 not yet named
-- Daily Winners panel coming in next update
 
 ## License
 

@@ -7,7 +7,7 @@
  * SOURCE (src/mocks/*) with decoded on-chain accounts without changing these types or
  * any component props. Nothing here imports web3/anchor — that is Stage 6B+.
  *
- * Numeric code → player-facing label/colour mapping lives in src/mocks/presentation.ts.
+ * Numeric code → player-facing label/colour mapping lives in src/lib/presentation.ts.
  */
 
 // --- numeric status codes (mirror the program's constants.rs; confirmed against IDL u8s) ---

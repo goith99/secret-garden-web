@@ -4,7 +4,7 @@ import { FlowerStatus } from "../types";
 import { useGame } from "../game/GameContext";
 import { FlowerSprite } from "./FlowerSprite";
 import { Badge } from "./Badge";
-import { flowerLabel, genomeLabel, rarity as rarityStyle } from "../mocks/presentation";
+import { flowerLabel, genomeLabel, rarity as rarityStyle } from "../lib/presentation";
 
 /**
  * A flower on the shelf. Supports BOTH interaction models from the design doc:
