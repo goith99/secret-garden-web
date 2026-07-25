@@ -1,9 +1,10 @@
 import type { DragEvent, MouseEvent } from "react";
 import type { Flower } from "../types";
-import { FlowerStatus } from "../types";
+import { FlowerStatus, GenomeStatus } from "../types";
 import { useGame } from "../game/GameContext";
 import { FlowerSprite } from "./FlowerSprite";
 import { Badge } from "./Badge";
+import { HintPanel } from "./HintPanel";
 import { flowerLabel, genomeLabel, rarity as rarityStyle } from "../lib/presentation";
 
 /**
@@ -16,6 +17,12 @@ import { flowerLabel, genomeLabel, rarity as rarityStyle } from "../lib/presenta
  * `showSubmit` is set (hybrids only; starters can't be entered). It's enabled only when a round
  * is Open and the flower is still Active; otherwise it's disabled with a "No open challenge
  * right now" tooltip. A flower already entered shows an "Entered" badge instead.
+ *
+ * "CHECK MATCH" sits above it and answers the question the player actually has before
+ * submitting: does this bloom fit the current challenge? The result is private to this
+ * player's own flower — see usePrivateHint — so it renders here on their own card and is
+ * never fetched for anyone else's. Starters are excluded (their genome is all zeroes by
+ * design, so a check would tell them nothing).
  */
 export function FlowerCard({
   flower,
@@ -29,8 +36,20 @@ export function FlowerCard({
   /** Show the "SUBMIT TO CHALLENGE" control. Hybrids only — starters are never submittable. */
   showSubmit: boolean;
 }) {
-  const { canSubmit, submitFlower, submittingId, profileNeedsMigration, roundOpen, hasEnteredCurrentRound } =
-    useGame();
+  const {
+    canSubmit,
+    submitFlower,
+    submittingId,
+    profileNeedsMigration,
+    roundOpen,
+    hasEnteredCurrentRound,
+    hint,
+    hintBusy,
+    hintNotice,
+    canCheckMatch,
+    checkMatch,
+    dismissHint,
+  } = useGame();
   const r = rarityStyle(flower.rarity);
 
   const submitted = flower.status === FlowerStatus.Submitted;
@@ -42,6 +61,20 @@ export function FlowerCard({
   const locked = submitted && roundOpen;
   const submitting = submittingId === flower.id;
   const goEnabled = canSubmit(flower);
+
+  // Check Match. Only sealed blooms qualify — a starter's genome is all zeroes, so there is
+  // nothing to check. The hint state is single-slot per wallet (one HintResult account), so
+  // `myHint` is only this card's when the ids agree, and every other card's button is
+  // disabled while one request runs.
+  const canCheck = showSubmit && flower.genomeStatus !== GenomeStatus.Starter;
+  const myHint = hint && hint.flowerId === flower.id ? hint : null;
+  const checking = myHint?.phase === "requesting" || myHint?.phase === "waiting";
+  const checkEnabled = canCheckMatch(flower);
+
+  const onCheckMatch = (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation(); // don't also trigger the card's select/place
+    checkMatch(flower);
+  };
 
   const onDragStart = (e: DragEvent<HTMLButtonElement>) => {
     if (locked) {
@@ -94,6 +127,53 @@ export function FlowerCard({
           {genomeLabel(flower.genomeStatus)}
         </span>
       </button>
+
+      {canCheck &&
+        (myHint && myHint.phase === "ready" ? (
+          <HintPanel hint={myHint} onDismiss={dismissHint} />
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={onCheckMatch}
+              disabled={!checkEnabled || checking}
+              title={
+                checking
+                  ? "Checking this flower against the challenge…"
+                  : checkEnabled
+                    ? "See which of this challenge's traits this flower has"
+                    : !roundOpen
+                      ? "No open challenge to check against"
+                      : hintBusy
+                        ? "Checking another flower — one at a time"
+                        : "Can't check this flower right now"
+              }
+              className={`w-full rounded-md border px-2 py-1 font-pixel text-[9px] uppercase tracking-wide transition
+                focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan
+                ${checkEnabled && !checking
+                  ? "border-garden-lavender/70 bg-garden-lavender/15 text-garden-lavender hover:bg-garden-lavender/30"
+                  : "cursor-not-allowed border-garden-moss/50 bg-garden-deep/60 text-garden-parch/40"}`}
+            >
+              {checking ? (
+                <span className="animate-pulseSoft">Checking…</span>
+              ) : (
+                "Check Match"
+              )}
+            </button>
+            {myHint?.phase === "error" && myHint.error && (
+              <span className="px-1 text-center font-body text-[9px] leading-tight text-garden-rose/80">
+                {myHint.error}
+              </span>
+            )}
+            {/* Carries its own flower id, so a declined check notes itself on the card the
+                player actually clicked rather than under every card at once. */}
+            {hintNotice?.flowerId === flower.id && (
+              <span className="px-1 text-center font-body text-[9px] leading-tight text-garden-parch/50">
+                {hintNotice.message}
+              </span>
+            )}
+          </>
+        ))}
 
       {showSubmit &&
         (submitted ? (

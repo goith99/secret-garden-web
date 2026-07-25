@@ -38,16 +38,26 @@ export function speciesOf(id: number): SpeciesSkin {
   return SPECIES[id] ?? SPECIES[255];
 }
 
-/** Trait ids stored in CompetitionRound.target_traits (u8). Mock trait vocabulary. */
+/**
+ * Trait ids stored in CompetitionRound.target_traits (u8) → the trait's real name.
+ *
+ * These are the EXACT names from the program's `constants.rs` TRAIT_TABLE (10 entries), not
+ * decorative substitutes: the same ids drive scoring AND the per-trait "Check Match" result,
+ * so a mismatched label here would tell the player they matched a trait they did not.
+ * Keep in lockstep with TRAIT_TABLE — the conditions each one checks live in the score_entry
+ * circuit and are documented beside each entry in constants.rs.
+ */
 export const TRAIT_NAMES: string[] = [
-  "Glowing Petals", // 0
-  "Twin Bloom", // 1
-  "Star Shape", // 2
-  "Sweet Fragrance", // 3
-  "Tall Stem", // 4
-  "Frost Tips", // 5
-  "Veined Leaves", // 6
-  "Nectar Rich", // 7
+  "Crimson", // 0 — color_gene >= 180
+  "Pale", // 1 — color_gene < 64
+  "Full Bloom", // 2 — petal_gene >= 150
+  "Broadleaf", // 3 — leaf_gene >= 128
+  "Tall", // 4 — stem_gene >= 160
+  "Fragrant", // 5 — aroma_gene >= 150
+  "Hardy", // 6 — climate_gene >= 140
+  "Recessive Carrier", // 7 — recessive_mask >= 32
+  "Mutant", // 8 — mutation_affinity is odd
+  "Stable", // 9 — stability >= 150
 ];
 
 export function traitName(id: number): string {

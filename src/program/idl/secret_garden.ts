@@ -22,6 +22,57 @@ export type SecretGarden = {
   ],
   "instructions": [
     {
+      "name": "addOperator",
+      "docs": [
+        "Registers an additional operator wallet. Authority-only (enforced by `has_one`).",
+        "Operators may run rounds (open/close/score/reveal/finalize) but cannot administer."
+      ],
+      "discriminator": [
+        149,
+        142,
+        187,
+        68,
+        33,
+        250,
+        87,
+        105
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "newOperator",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "breedCallback",
       "docs": [
         "Callback invoked by the Arcium cluster once `breed` finishes.",
@@ -486,12 +537,32 @@ export type SecretGarden = {
         {
           "name": "authority",
           "docs": [
-            "Operator that opened the round."
+            "Authority or operator. (Field kept named `authority` so existing clients/IDL keys",
+            "are unchanged; the actual authorization is the runtime operator-or-authority check.)"
           ],
-          "signer": true,
-          "relations": [
-            "round"
-          ]
+          "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "Game config, read to authorize the signer (authority or operator). No pause gate:",
+            "closing a round is winding down in-flight game state, which must work while paused."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "round",
@@ -614,12 +685,32 @@ export type SecretGarden = {
         {
           "name": "authority",
           "docs": [
-            "Operator that opened the round."
+            "Authority or operator. (Field kept named `authority` for client/IDL stability; the",
+            "authorization is the runtime operator-or-authority check.)"
           ],
-          "signer": true,
-          "relations": [
-            "round"
-          ]
+          "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "Game config, read to authorize the signer (authority or operator). No pause gate:",
+            "finalizing winds down in-flight game state, which must work while paused."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
         },
         {
           "name": "round",
@@ -661,6 +752,76 @@ export type SecretGarden = {
         72,
         56,
         134
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mxeAccount",
+          "writable": true
+        },
+        {
+          "name": "compDefAccount",
+          "writable": true
+        },
+        {
+          "name": "addressLookupTable",
+          "writable": true
+        },
+        {
+          "name": "lutProgram",
+          "address": "AddressLookupTab1e1111111111111111111111111"
+        },
+        {
+          "name": "arciumProgram",
+          "address": "Arcj82pX7HxYKLR92qvgZUAd7vGS1k4hQvAFcPATFdEQ"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initPrivateHintCompDef",
+      "docs": [
+        "Registers the `private_hint` computation definition on-chain. Authority-only, once.",
+        "Same shape as the other `init_*_comp_def` instructions."
+      ],
+      "discriminator": [
+        35,
+        102,
+        57,
+        10,
+        248,
+        62,
+        130,
+        166
       ],
       "accounts": [
         {
@@ -908,6 +1069,66 @@ export type SecretGarden = {
       "args": []
     },
     {
+      "name": "migrateConfig",
+      "docs": [
+        "Grows the singleton `GameConfig` to the multi-operator layout (appends `operators`",
+        "and `operator_count`) and zero-initializes the new fields. Authority-only.",
+        "",
+        "Like `migrate_profile`, the config is taken as a RAW account: a pre-operator config",
+        "is shorter than the current `GameConfig`, so loading it as `Account<GameConfig>` would",
+        "fail with `AccountDidNotDeserialize` BEFORE any realloc constraint could run. We grow",
+        "it in place, preserving the discriminator and every existing field; `resize`",
+        "zero-fills the appended bytes, so `operators = [Pubkey::default(); 3]` and",
+        "`operator_count = 0`. Idempotent: a config already at (or above) the new size is a",
+        "no-op. Authority is verified by reading the stored authority pubkey directly, since",
+        "the raw account cannot be `has_one`-checked. Runs regardless of the pause kill-switch."
+      ],
+      "discriminator": [
+        92,
+        131,
+        58,
+        105,
+        210,
+        154,
+        224,
+        193
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "`GameConfig`, so it cannot be loaded as a typed `Account`."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "migrateProfile",
       "docs": [
         "Stage 5D migration: grows a pre-5D `PlayerProfile` (created with the smaller layout,",
@@ -989,13 +1210,10 @@ export type SecretGarden = {
         {
           "name": "authority",
           "docs": [
-            "Configured game authority; funds the new round account."
+            "Authority or operator running the round; funds the new round account."
           ],
           "writable": true,
-          "signer": true,
-          "relations": [
-            "config"
-          ]
+          "signer": true
         },
         {
           "name": "config",
@@ -1036,6 +1254,276 @@ export type SecretGarden = {
       "args": []
     },
     {
+      "name": "privateHintCallback",
+      "docs": [
+        "Callback invoked by the Arcium cluster once `private_hint` finishes. Persists the",
+        "sealed bitmask (ciphertext + nonce + encryption key) into the player's `HintResult`",
+        "and flips `ready = true`. On failure it leaves `ready = false` so the client keeps",
+        "showing \"no hint yet\" and the player can simply re-request. There is no idempotency",
+        "flag to guard: a duplicate success callback just rewrites the identical sealed bytes."
+      ],
+      "discriminator": [
+        228,
+        122,
+        55,
+        12,
+        18,
+        243,
+        118,
+        100
+      ],
+      "accounts": [
+        {
+          "name": "arciumProgram",
+          "address": "Arcj82pX7HxYKLR92qvgZUAd7vGS1k4hQvAFcPATFdEQ"
+        },
+        {
+          "name": "compDefAccount"
+        },
+        {
+          "name": "mxeAccount"
+        },
+        {
+          "name": "computationAccount"
+        },
+        {
+          "name": "clusterAccount"
+        },
+        {
+          "name": "instructionsSysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "hintResult",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "hint_result.player",
+                "account": "hintResult"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "output",
+          "type": {
+            "defined": {
+              "name": "signedComputationOutputs",
+              "generics": [
+                {
+                  "kind": "type",
+                  "type": {
+                    "defined": {
+                      "name": "privateHintOutput"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "queuePrivateHint",
+      "docs": [
+        "Queues a `private_hint` computation for one of the SIGNER'S OWN flowers against the",
+        "CURRENT open round's public target traits. The MPC seals a 1-byte trait-satisfaction",
+        "bitmask to the player's supplied x25519 key, so only they can decrypt the answer.",
+        "",
+        "Guards (all enforced by `QueuePrivateHint`'s account constraints, so they fail cleanly",
+        "with a specific error rather than doing nothing):",
+        "- the flower is owned by the signer and is NOT Locked (mid-breed) — Active or",
+        "Submitted flowers are both hint-checkable;",
+        "- the round is the current one AND is Open (`NoActiveRound` otherwise).",
+        "",
+        "`hint_pubkey` / `hint_nonce` are the player's sealing key material (same shape as",
+        "`start_breeding`'s `env_pubkey` / `env_nonce`). The genome ciphertext is read in-place",
+        "from the flower account (never supplied by the caller), exactly like `queue_score_entry`."
+      ],
+      "discriminator": [
+        128,
+        59,
+        222,
+        235,
+        201,
+        86,
+        8,
+        20
+      ],
+      "accounts": [
+        {
+          "name": "player",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "round",
+          "docs": [
+            "The round to check against — it must be the current OPEN round. `NoActiveRound`",
+            "(rather than a silent no-op) if it is Closed/Finalized. Self-referential seeds prove",
+            "it is a genuine `CompetitionRound` PDA."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.round_id",
+                "account": "competitionRound"
+              }
+            ]
+          }
+        },
+        {
+          "name": "flower",
+          "docs": [
+            "The player's own flower. Its encrypted genome is read in-place by the MPC (never",
+            "supplied by the caller). Must be owned by the signer and not Locked — a hint is",
+            "checkable for Active OR Submitted flowers, just not one that is mid-breed."
+          ]
+        },
+        {
+          "name": "hintResult",
+          "docs": [
+            "The single overwritable per-player hint account. `init_if_needed`: created on the",
+            "first request, reused (overwritten) on every later one."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  105,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "player"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signPdaAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  65,
+                  114,
+                  99,
+                  105,
+                  117,
+                  109,
+                  83,
+                  105,
+                  103,
+                  110,
+                  101,
+                  114,
+                  65,
+                  99,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "mxeAccount"
+        },
+        {
+          "name": "mempoolAccount",
+          "writable": true
+        },
+        {
+          "name": "executingPool",
+          "writable": true
+        },
+        {
+          "name": "computationAccount",
+          "writable": true
+        },
+        {
+          "name": "compDefAccount"
+        },
+        {
+          "name": "clusterAccount",
+          "writable": true
+        },
+        {
+          "name": "poolAccount",
+          "writable": true,
+          "address": "G2sRWJvi3xoyh5k2gY49eG9L8YhAEWQPtNb1zb1GXTtC"
+        },
+        {
+          "name": "clockAccount",
+          "writable": true,
+          "address": "7EbMUTLo5DjdzbN7s8BXeZwXzEwNQb1hScfRvWg8a6ot"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "arciumProgram",
+          "address": "Arcj82pX7HxYKLR92qvgZUAd7vGS1k4hQvAFcPATFdEQ"
+        }
+      ],
+      "args": [
+        {
+          "name": "computationOffset",
+          "type": "u64"
+        },
+        {
+          "name": "hintPubkey",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "hintNonce",
+          "type": "u128"
+        }
+      ]
+    },
+    {
       "name": "queueRevealTop3",
       "docs": [
         "Queues the top-3 reveal for a Closed, fully-scored round. Authority-only.",
@@ -1062,10 +1550,7 @@ export type SecretGarden = {
         {
           "name": "authority",
           "writable": true,
-          "signer": true,
-          "relations": [
-            "round"
-          ]
+          "signer": true
         },
         {
           "name": "config",
@@ -1213,10 +1698,7 @@ export type SecretGarden = {
         {
           "name": "authority",
           "writable": true,
-          "signer": true,
-          "relations": [
-            "round"
-          ]
+          "signer": true
         },
         {
           "name": "config",
@@ -1465,6 +1947,58 @@ export type SecretGarden = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "removeOperator",
+      "docs": [
+        "Removes a registered operator by pubkey, shifting the array left to keep the active",
+        "slots contiguous. Authority-only (`has_one`) — operators cannot remove themselves or",
+        "each other, so a leaked operator key cannot clean up its own tracks."
+      ],
+      "discriminator": [
+        84,
+        183,
+        126,
+        251,
+        137,
+        150,
+        214,
+        134
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "operator",
+          "type": "pubkey"
+        }
+      ]
     },
     {
       "name": "revealTop3Callback",
@@ -2140,6 +2674,19 @@ export type SecretGarden = {
       ]
     },
     {
+      "name": "hintResult",
+      "discriminator": [
+        10,
+        205,
+        34,
+        242,
+        106,
+        37,
+        56,
+        253
+      ]
+    },
+    {
       "name": "playerProfile",
       "discriminator": [
         82,
@@ -2165,6 +2712,19 @@ export type SecretGarden = {
         242,
         130,
         11
+      ]
+    },
+    {
+      "name": "hintComputedEvent",
+      "discriminator": [
+        123,
+        187,
+        193,
+        188,
+        41,
+        253,
+        116,
+        196
       ]
     },
     {
@@ -2334,6 +2894,36 @@ export type SecretGarden = {
       "code": 6027,
       "name": "breedingLimitReached",
       "msg": "You have used all 5 breeding attempts for this round"
+    },
+    {
+      "code": 6028,
+      "name": "operatorSlotsFull",
+      "msg": "All operator slots are full (max 3)"
+    },
+    {
+      "code": 6029,
+      "name": "operatorAlreadyExists",
+      "msg": "That operator is already registered"
+    },
+    {
+      "code": 6030,
+      "name": "operatorNotFound",
+      "msg": "That operator was not found"
+    },
+    {
+      "code": 6031,
+      "name": "invalidOperator",
+      "msg": "Invalid operator pubkey"
+    },
+    {
+      "code": 6032,
+      "name": "roundTooRecentToClose",
+      "msg": "The round has been open too briefly for an operator to close it"
+    },
+    {
+      "code": 6033,
+      "name": "noActiveRound",
+      "msg": "There is no active (open) round to request a hint for"
     }
   ],
   "types": [
@@ -3299,6 +3889,150 @@ export type SecretGarden = {
               "PDA bump."
             ],
             "type": "u8"
+          },
+          {
+            "name": "operators",
+            "docs": [
+              "Up to three additional operator wallets allowed to run rounds (open/close/score/",
+              "reveal/finalize). Only the first `operator_count` slots are active; the rest are",
+              "`Pubkey::default()`. Operators CANNOT add/remove operators, pause, or upgrade."
+            ],
+            "type": {
+              "array": [
+                "pubkey",
+                3
+              ]
+            }
+          },
+          {
+            "name": "operatorCount",
+            "docs": [
+              "Number of active entries in `operators` (0..=3)."
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "hintComputedEvent",
+      "docs": [
+        "Emitted by `private_hint_callback` when a hint is sealed and ready. Carries no secret",
+        "data — only the player + round so a client can react (the bitmask stays encrypted)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "player",
+            "type": "pubkey"
+          },
+          {
+            "name": "roundId",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "hintResult",
+      "docs": [
+        "Per-player Private Hint result. PDA seeds: `[b\"hint\", player]` — exactly ONE account per",
+        "player, OVERWRITTEN on each new `queue_private_hint` (hints are transient/informational,",
+        "so no history is kept on-chain and rent stays bounded to one small account per player).",
+        "",
+        "Created (or reset to `ready = false`) at queue time; the sealed ciphertext is written by",
+        "`private_hint_callback`. `ready` is the \"no hint yet\" vs \"hint ready\" flag: a freshly",
+        "queued (or never-computed) result reads `ready == false`, so a client never mistakes a",
+        "stale/blank ciphertext for a fresh answer. The ciphertext is `Enc<Shared, u8>` sealed to",
+        "this `player`'s x25519 key; only they can decrypt it (see the `private_hint` circuit)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "player",
+            "docs": [
+              "The player this hint belongs to (also the PDA seed). Only this wallet's sealing key",
+              "can decrypt `ciphertext`."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "roundId",
+            "docs": [
+              "The `round_id` whose target traits the latest hint was computed against. Lets a client",
+              "detect a hint left over from a previous round."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "targetTraitCount",
+            "docs": [
+              "Number of meaningful low bits in the decrypted bitmask (== the round's",
+              "`target_trait_count` at request time). Public convenience; bits `>= count` are 0."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "ready",
+            "docs": [
+              "`false` until `private_hint_callback` writes a fresh sealed result; reset to `false`",
+              "by every new `queue_private_hint`. Distinguishes \"no hint yet\" from \"hint ready\"."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "encryptionKey",
+            "docs": [
+              "x25519 encryption key from the sealed output (`SharedEncryptedStruct::encryption_key`);",
+              "the client combines it with its own private key to derive the decryption shared secret."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "nonce",
+            "docs": [
+              "Sealing nonce (little-endian u128) for `ciphertext`."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "ciphertext",
+            "docs": [
+              "The sealed 1-byte bitmask (`Enc<Shared, u8>` = 1 scalar * 32 bytes). Meaningless until",
+              "`ready == true`."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "computedAt",
+            "docs": [
+              "Unix timestamp the latest hint was computed (0 until the first callback lands)."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump."
+            ],
+            "type": "u8"
           }
         ]
       }
@@ -3778,6 +4512,32 @@ export type SecretGarden = {
       }
     },
     {
+      "name": "privateHintOutput",
+      "docs": [
+        "The output of the callback instruction. Provided as a struct with ordered fields",
+        "as anchor does not support tuples and tuple structs yet."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "field0",
+            "type": {
+              "defined": {
+                "name": "sharedEncryptedStruct",
+                "generics": [
+                  {
+                    "kind": "const",
+                    "value": "1"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
       "name": "revealTop3Output",
       "docs": [
         "The output of the callback instruction. Provided as a struct with ordered fields",
@@ -3924,6 +4684,50 @@ export type SecretGarden = {
                 "vec": "bool"
               }
             ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "sharedEncryptedStruct",
+      "generics": [
+        {
+          "kind": "const",
+          "name": "len",
+          "type": "usize"
+        }
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "encryptionKey",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "nonce",
+            "type": "u128"
+          },
+          {
+            "name": "ciphertexts",
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                },
+                {
+                  "generic": "len"
+                }
+              ]
+            }
           }
         ]
       }

@@ -114,6 +114,17 @@ export function entryPda(round: PublicKey, player: PublicKey): PublicKey {
     PROGRAM_ID,
   )[0];
 }
+/**
+ * The player's HintResult account (seeds = ["hint", player]). There is exactly ONE per
+ * wallet: each queue_private_hint overwrites it in place, so a hint is only ever readable
+ * for the wallet that asked for it — never another player's.
+ */
+export function hintPda(player: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [te.encode("hint"), player.toBytes()],
+    PROGRAM_ID,
+  )[0];
+}
 
 // ---- mappers --------------------------------------------------------------------------
 function mapConfig(c: RawConfig): GardenConfig {

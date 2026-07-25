@@ -1,11 +1,12 @@
 /**
  * Stage 6D — the ONLY place real on-chain transactions are built and sent. Components never
  * import web3/anchor/arcium; they call the `useGardenActions()` hook, which exposes exactly
- * the three player-scope instructions:
+ * the player-scope instructions:
  *
- *   claim_starters  — a new player claims their 6 starter flowers (one-time).
- *   start_breeding  — queue an MPC breeding of two owned parents under chosen environment.
- *   submit_entry    — submit one Active flower to the Open competition round.
+ *   claim_starters     — a new player claims their 6 starter flowers (one-time).
+ *   start_breeding     — queue an MPC breeding of two owned parents under chosen environment.
+ *   submit_entry       — submit one Active flower to the Open competition round.
+ *   queue_private_hint — ask which of the round's target traits one OWN flower satisfies.
  *
  * Operator/authority instructions (open_round, queue_score_entry, reveal_top3, cancel*) are
  * deliberately NOT exposed here.
@@ -21,6 +22,13 @@
  * exactly as tests/breeding.devnet.ts does. (This is the proven working path; the plaintext
  * route is not expressible against this IDL.) The selector indices 0..2 are the values
  * encrypted; the circuit interprets them server-side.
+ *
+ * KEY LIFETIME (private_hint): breeding and hinting use the same x25519 + RescueCipher
+ * primitives but with opposite key lifetimes. A breed result is PUBLIC, so its ephemeral key
+ * is discarded as soon as the tx is built. A hint result is sealed BACK to the requester, so
+ * its ephemeral private key is returned to the caller and must stay in memory (never storage,
+ * never a server) until the result is fetched and decrypted — it is the only thing that can
+ * open it. See queuePrivateHint / decryptHint below.
  */
 import { useCallback, useMemo } from "react";
 import { BN } from "@anchor-lang/core";
@@ -53,6 +61,7 @@ import {
   roundPda,
   experimentPda,
   entryPda,
+  hintPda,
   fetchFlower,
 } from "./accounts";
 import type { Environment, Flower } from "../types";
@@ -198,6 +207,27 @@ export async function pollExperiment(
   return "timeout";
 }
 
+/**
+ * The live MXE public key, retried until the cluster answers (it can lag right after a
+ * deploy). EVERY encrypted flow derives its shared secret against THIS key — both the
+ * outbound direction (start_breeding encrypting the environment) and the inbound one
+ * (private_hint decrypting a result sealed to the player), which is why it lives here
+ * rather than inside a single action. Mirrors the retry loop in tests/*.devnet.ts.
+ */
+async function fetchMxePublicKey(provider: AnchorProvider): Promise<Uint8Array> {
+  let mxePublicKey: Uint8Array | null = null;
+  for (let i = 0; i < 30 && !mxePublicKey; i++) {
+    try {
+      mxePublicKey = await getMXEPublicKey(provider, PROGRAM_ID);
+    } catch {
+      /* MXE key not ready yet */
+    }
+    if (!mxePublicKey) await sleep(1000);
+  }
+  if (!mxePublicKey) throw new TxError("failed", "greenhouse not ready (no MXE key)");
+  return mxePublicKey;
+}
+
 // ---- the Arcium account set a queued computation needs (matches *.devnet.ts) ----------
 // `circuit` selects the comp-def: "breed" (start_breeding), "score_entry" (queue_score_entry)
 // or "reveal_top3" (queue_reveal_top3) — the exact strings proven in tests/scoring.devnet.ts.
@@ -217,6 +247,38 @@ export interface StartBreedingResult {
   signature: string;
   /** Flower index the offspring will occupy once the MPC callback lands (for a follow-up read). */
   offspringIndex: number;
+}
+
+/**
+ * The player's HintResult account, flattened (no BN/PublicKey leakage, same rule as
+ * src/program/accounts.ts mappers). `ciphertext` + `nonce` are the two fields decryptHint
+ * needs; everything else lets the caller tell a fresh result from a stale one.
+ */
+export interface HintResultAccount {
+  /** False until the computation's callback writes a fresh sealed result. */
+  ready: boolean;
+  /** The round the hint was computed against — a hint from an older round is stale. */
+  roundId: number;
+  /** Meaningful low-bit count of the decrypted mask (the round's target_trait_count). */
+  targetTraitCount: number;
+  /** The sealed result (32 bytes) — meaningless until `ready`, and only the requesting key opens it. */
+  ciphertext: number[];
+  /** The OUTPUT nonce assigned by the cluster; this is what decrypt must use. */
+  nonce: number[];
+  /** Unix seconds the result was computed; advances on every overwrite. */
+  computedAt: number;
+}
+
+export interface QueueHintResult {
+  /**
+   * The ephemeral x25519 PRIVATE key the result is sealed to. Unlike start_breeding (whose
+   * result is public, so its key is thrown away immediately), this key is the ONLY thing that
+   * can open the hint — the caller must hold it until it has decrypted, then drop it.
+   */
+  hintPriv: Uint8Array;
+  signature: string;
+  /** The round this request was queued against (compare with HintResultAccount.roundId). */
+  roundId: number;
 }
 
 export interface GardenActions {
@@ -243,6 +305,19 @@ export interface GardenActions {
   pollBreeding: (experiment: PublicKey) => Promise<ExperimentOutcome>;
   /** Read one of the connected wallet's FlowerRecords by index (e.g. a new offspring). */
   fetchFlower: (index: number) => Promise<Flower | null>;
+  /**
+   * Ask for a private hint on one of the player's OWN flowers: which of the open round's
+   * target traits it satisfies. Returns the ephemeral private key the answer is sealed to —
+   * the caller MUST keep it alive until it reads and decrypts the result (see QueueHintResult).
+   */
+  queuePrivateHint: (flowerRecord: PublicKey) => Promise<QueueHintResult>;
+  /** Read a player's HintResult account. Null when they've never requested a hint. */
+  fetchHintResult: (player: PublicKey) => Promise<HintResultAccount | null>;
+  /** Open a sealed hint with the key from queuePrivateHint. Returns the raw trait bitmask. */
+  decryptHint: (
+    hintPriv: Uint8Array,
+    hintResult: Pick<HintResultAccount, "ciphertext" | "nonce">,
+  ) => Promise<number>;
 }
 
 /**
@@ -355,16 +430,7 @@ export function useGardenActions(): GardenActions {
       const provider = program.provider as AnchorProvider;
 
       // x25519 key-exchange against the live MXE public key, then RescueCipher the env.
-      let mxePublicKey: Uint8Array | null = null;
-      for (let i = 0; i < 30 && !mxePublicKey; i++) {
-        try {
-          mxePublicKey = await getMXEPublicKey(provider, PROGRAM_ID);
-        } catch {
-          /* MXE key not ready yet */
-        }
-        if (!mxePublicKey) await sleep(1000);
-      }
-      if (!mxePublicKey) throw new TxError("failed", "greenhouse not ready (no MXE key)");
+      const mxePublicKey = await fetchMxePublicKey(provider);
 
       const privKey = x25519.utils.randomSecretKey();
       const pubKey = x25519.getPublicKey(privKey);
@@ -443,6 +509,94 @@ export function useGardenActions(): GardenActions {
     [program, publicKey, submit],
   );
 
+  // ---- private hint -------------------------------------------------------------------
+  // Same x25519 + RescueCipher primitives as startBreeding, but the key lifetime is the
+  // opposite: breeding seals nothing back to the player (the offspring is public), so it
+  // discards its key the moment the tx is built. A hint IS sealed back — to a key only this
+  // browser session ever held — so the private key is handed to the caller instead. Nobody
+  // else, operator and cluster included, can open the result.
+  const queuePrivateHint = useCallback(
+    async (flowerRecord: PublicKey): Promise<QueueHintResult> => {
+      if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
+      const player = publicKey;
+
+      // The round PDA is seeded by round_id, which Anchor can't resolve on its own; read the
+      // live counter rather than trusting the UI's copy (same rule as openRound/startBreeding).
+      const config = await program.account.gameConfig.fetch(configPda());
+      const roundId = Number(config.currentRound.toString());
+      if (roundId <= 0) throw new TxError("failed", "no open challenge to check against");
+
+      // Fresh, single-use sealing keypair. `hintNonce` is the nonce we ASK the cluster to seal
+      // under; the nonce the result is actually decrypted with comes back on-chain in
+      // HintResult.nonce, so this one is deliberately not kept.
+      const hintPriv = x25519.utils.randomSecretKey();
+      const hintPub = x25519.getPublicKey(hintPriv);
+      const hintNonce = randomBytes(16);
+      const offset = new BN(Array.from(randomBytes(8)));
+
+      const tx = await program.methods
+        .queuePrivateHint(
+          offset,
+          Array.from(hintPub),
+          new BN(deserializeLE(hintNonce).toString()),
+        )
+        .accountsPartial({
+          player,
+          round: roundPda(roundId),
+          flower: flowerRecord,
+          hintResult: hintPda(player),
+          ...arciumAccountsFor("private_hint", offset),
+        })
+        .transaction();
+
+      const signature = await submit(tx);
+      return { hintPriv, signature, roundId };
+    },
+    [program, publicKey, submit],
+  );
+
+  // One HintResult per wallet (seeds = ["hint", player]); fetchNullable because a player who
+  // has never asked for a hint simply has no account yet — that is not an error.
+  const fetchHintResult = useCallback(
+    async (player: PublicKey): Promise<HintResultAccount | null> => {
+      if (!program) return null;
+      const acc = await program.account.hintResult.fetchNullable(hintPda(player));
+      if (!acc) return null;
+      return {
+        ready: acc.ready,
+        roundId: Number(acc.roundId.toString()),
+        targetTraitCount: acc.targetTraitCount,
+        ciphertext: Array.from(acc.ciphertext),
+        nonce: Array.from(acc.nonce),
+        computedAt: acc.computedAt.toNumber(),
+      };
+    },
+    [program],
+  );
+
+  // Unseal the result. TWO details here are easy to get wrong and were pinned down against
+  // the live cluster (tests/private-hint.devnet.ts):
+  //   1. the shared secret is derived against the MXE public key — NOT HintResult.encryptionKey,
+  //      which is only our own pubkey echoed back as an identifier of who it was sealed for;
+  //   2. the nonce is the OUTPUT nonce stored on-chain — NOT the one we sent at queue time.
+  // The plaintext is a single byte: bit i is set when target_traits[i] is satisfied.
+  const decryptHint = useCallback(
+    async (
+      hintPriv: Uint8Array,
+      hintResult: Pick<HintResultAccount, "ciphertext" | "nonce">,
+    ): Promise<number> => {
+      if (!program) throw new TxError("failed", "wallet not connected");
+      const mxePublicKey = await fetchMxePublicKey(program.provider as AnchorProvider);
+      const cipher = new RescueCipher(x25519.getSharedSecret(hintPriv, mxePublicKey));
+      const plaintext = cipher.decrypt(
+        [hintResult.ciphertext],
+        Uint8Array.from(hintResult.nonce),
+      );
+      return Number(plaintext[0]);
+    },
+    [program],
+  );
+
   const pollBreeding = useCallback(
     (experiment: PublicKey) => {
       if (!program) return Promise.resolve<ExperimentOutcome>("failed");
@@ -469,8 +623,11 @@ export function useGardenActions(): GardenActions {
       migrateProfile,
       pollBreeding,
       fetchFlower: fetchFlowerRecord,
+      queuePrivateHint,
+      fetchHintResult,
+      decryptHint,
     }),
-    [ready, createProfile, claimStarters, startBreeding, submitEntry, migrateProfile, pollBreeding, fetchFlowerRecord],
+    [ready, createProfile, claimStarters, startBreeding, submitEntry, migrateProfile, pollBreeding, fetchFlowerRecord, queuePrivateHint, fetchHintResult, decryptHint],
   );
 }
 

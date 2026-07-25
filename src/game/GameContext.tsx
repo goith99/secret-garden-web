@@ -36,6 +36,7 @@ import {
 } from "../types";
 import { MOCK_FLOWERS, MOCK_JOURNAL, MOCK_CHALLENGE, MOCK_WINNERS } from "../mocks/data";
 import { useGardenActions, TxError } from "../program/transactions";
+import { usePrivateHint, type HintNotice, type HintView } from "../hooks/usePrivateHint";
 import { useGardener } from "../wallet/useGardener";
 import { useToast } from "../components/Toast";
 
@@ -157,6 +158,19 @@ interface GameContextValue {
   submitFlower: (flower: Flower) => void;
   /** Retry the garden refresh from the bloom toast; clears the toast on success. */
   retryRefresh: () => void;
+  // ---- "Check Match" (private hint) — one at a time, one HintResult account per wallet ----
+  /** The hint being requested or shown, or null. Rendered ONLY on its own flower's card. */
+  hint: HintView | null;
+  /** True while a hint request is running (every other flower's button disables). */
+  hintBusy: boolean;
+  /** Transient "Check cancelled." note after a declined wallet prompt (scoped to its card). */
+  hintNotice: HintNotice | null;
+  /** Whether this flower can be checked right now (open round, own sealed bloom, idle). */
+  canCheckMatch: (flower: Flower) => boolean;
+  /** Ask which of the round's target traits this flower satisfies. */
+  checkMatch: (flower: Flower) => void;
+  /** Clear the hint result/error from the card. */
+  dismissHint: () => void;
   /** DEV-only demo: jump to the "Bloom Failed" state to exercise that label. */
   simulateFailure: () => void;
 }
@@ -236,6 +250,18 @@ export function GameProvider({
     (): Promise<boolean> => (onRefetch ? onRefetch() : Promise.resolve(false)),
     [onRefetch],
   );
+
+  // "Check Match" lives here rather than in the card because a wallet has exactly ONE
+  // HintResult account on-chain: a single owner of that state keeps two cards from racing
+  // for it. The sealing key stays inside the hook (a ref) and never reaches the UI.
+  const {
+    hint,
+    busy: hintBusy,
+    canCheckMatch,
+    checkMatch,
+    dismissHint,
+    hintNotice,
+  } = usePrivateHint(actions, challenge, address ?? null, !!onRefetch);
 
   // Adopt freshly-refetched chain data: useGardenData hands us new array identities only when
   // a reload actually produced new flowers/journal, so this re-syncs the shelf after a
@@ -664,8 +690,15 @@ export function GameProvider({
       submitFlower,
       retryRefresh,
       simulateFailure,
+      hint,
+      hintBusy,
+      hintNotice,
+      canCheckMatch,
+      checkMatch,
+      dismissHint,
     }),
     [
+      hint, hintBusy, hintNotice, canCheckMatch, checkMatch, dismissHint,
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
       newBloom, roundOpen, hasEnteredCurrentRound, breedsRemaining, breedError, breedNotice, dropBlockedNotice, journal, challenge, winners, activeTab, submittingId,
       bloomToast, authority, profileNeedsMigration, migrating, migrateError, migrateProfile, refetchGarden,
