@@ -46,7 +46,7 @@ export interface Flower {
   flowerIndex: number; // u32
   visualSpeciesId: number; // u8 — 0..5 = starters, 255 = hybrid
   generation: number; // u16
-  rarity: number; // u8 — 0..4 rarity tier
+  rarity: number; // u8 — 1..5 rarity tier (Common..Legendary); 0 = unranked (bred hybrids)
   stability: number; // u8 — 0..100
   revealedTraitMask: number; // u32 bitmask of revealed trait slots
   genomeStatus: GenomeStatusCode;

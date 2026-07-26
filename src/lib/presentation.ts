@@ -71,13 +71,25 @@ export interface RarityStyle {
   dot: string; // hex for sprite accents
 }
 
-/** rarity (u8 0..4) → tier. */
+/**
+ * FlowerRecord.rarity (u8) → tier. Indexed to match the chain EXACTLY: the program's
+ * `RARITY_*` constants are ONE-based (constants.rs: COMMON=1, UNCOMMON=2, RARE=3, EPIC=4,
+ * LEGENDARY=5 — the last reserved for non-starter species in a later stage).
+ *
+ * Index 0 is "unranked": `start_breeding` writes `rarity: 0` for every offspring because
+ * rarity scoring isn't assigned at breed time. Those blooms present as Common rather than
+ * as a tier of their own, so slot 0 deliberately repeats slot 1.
+ *
+ * This array was previously zero-based, which shifted every flower one tier up — a Common
+ * starter read as Uncommon and an Epic as Legendary. Keep the leading duplicate.
+ */
 export const RARITY: RarityStyle[] = [
-  { label: "Common", text: "text-garden-parch", ring: "border-garden-moss", dot: "#9fb6a4" },
-  { label: "Uncommon", text: "text-garden-mint", ring: "border-garden-leaf", dot: "#8fd6a6" },
-  { label: "Rare", text: "text-garden-cyan", ring: "border-garden-cyan", dot: "#6cc7cf" },
-  { label: "Epic", text: "text-garden-lavender", ring: "border-garden-lavender", dot: "#c1aef0" },
-  { label: "Legendary", text: "text-garden-gold", ring: "border-garden-gold", dot: "#e6c25c" },
+  { label: "Common", text: "text-garden-parch", ring: "border-garden-moss", dot: "#9fb6a4" }, // 0 unranked
+  { label: "Common", text: "text-garden-parch", ring: "border-garden-moss", dot: "#9fb6a4" }, // 1
+  { label: "Uncommon", text: "text-garden-mint", ring: "border-garden-leaf", dot: "#8fd6a6" }, // 2
+  { label: "Rare", text: "text-garden-cyan", ring: "border-garden-cyan", dot: "#6cc7cf" }, // 3
+  { label: "Epic", text: "text-garden-lavender", ring: "border-garden-lavender", dot: "#c1aef0" }, // 4
+  { label: "Legendary", text: "text-garden-gold", ring: "border-garden-gold", dot: "#e6c25c" }, // 5
 ];
 
 export function rarity(r: number): RarityStyle {
