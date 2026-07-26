@@ -9,6 +9,8 @@ import { FlowerSprite } from "./FlowerSprite";
 const BREEDS_SPENT_MSG =
   "You've used all your breeds for this round. Come back next round!";
 
+const COLLECTION_FULL_MSG = "Your collection is full. Release a flower to make room.";
+
 /**
  * The Hybrid Pot — the focal point AND the crossbreed action (Stage 6D). Clicking the pot
  * drives the breeding state machine, EXCEPT at BloomReady: there the new flower is shown
@@ -58,11 +60,14 @@ export function HybridPot() {
     dropBlockedNotice,
     submittingId,
     profileNeedsMigration,
+    collectionFull,
   } = useGame();
   const { connected } = useGardener();
   const { requestConnect } = useConnectWallet();
   // Inline "no breeds left" note, shown when an exhausted player clicks to cross.
   const [showSpentMsg, setShowSpentMsg] = useState(false);
+  // Same, for a player whose 20 hybrid slots are all taken.
+  const [showFullMsg, setShowFullMsg] = useState(false);
 
   const ready = phase === "Ready"; // both pots filled, idle — armed to cross
   const confirming = phase === "Confirm"; // awaiting the wallet approval
@@ -72,9 +77,12 @@ export function HybridPot() {
   const oneFilled = (potA === null) !== (potB === null); // exactly one pot has a flower
   const submitting = submittingId !== null;
   const exhausted = breedsRemaining <= 0; // per-round breed cap spent (connected/real mode)
+  // All 20 hybrid slots taken — the program would reject the cross, so the pot never arms.
+  // Unlike `exhausted` (which clears next round), this one clears when a flower is released.
+  const full = connected && collectionFull;
   const needsUpdate = connected && profileNeedsMigration; // one-time migrate pending
   // The gold "Crossbreed" affordance only when a connected player can actually cross now.
-  const armed = ready && connected && !exhausted && !needsUpdate;
+  const armed = ready && connected && !exhausted && !full && !needsUpdate;
 
   // What a click does, by state. Disconnected → prompt to connect (the game stays visible);
   // update pending → disabled (the notice bar drives it); exhausted → show the "come back next
@@ -86,6 +94,11 @@ export function HybridPot() {
     }
     if (needsUpdate) return; // disabled — the "update your garden" notice handles migration
     if (ready) {
+      // Explain rather than attempt: both of these are certain on-chain rejections.
+      if (full) {
+        setShowFullMsg(true);
+        return;
+      }
       if (exhausted) {
         setShowSpentMsg(true);
         return;
@@ -122,9 +135,11 @@ export function HybridPot() {
               ? "Update your garden first (see notice above)"
               : armed
                 ? "Crossbreed the two flowers"
-                : ready && exhausted
-                  ? "No breeds remaining this round"
-                  : failed
+                : ready && full
+                  ? "Your collection is full — release a flower to make room"
+                  : ready && exhausted
+                    ? "No breeds remaining this round"
+                    : failed
                     ? "Bloom failed — try again"
                     : bloomed
                       ? "Your new bloom is ready"
@@ -210,6 +225,15 @@ export function HybridPot() {
                 Crossbreed
               </span>
             </>
+          ) : ready && full ? (
+            <>
+              <span className="font-pixel text-[10px] uppercase tracking-wide text-garden-gold/80">
+                Collection full
+              </span>
+              <span className="mt-1 max-w-[7rem] font-pixel text-[9px] uppercase leading-tight tracking-wide text-garden-parch/40">
+                Release a flower to make room
+              </span>
+            </>
           ) : ready && exhausted ? (
             <>
               <span className="font-pixel text-[10px] uppercase tracking-wide text-garden-gold/80">
@@ -232,8 +256,16 @@ export function HybridPot() {
         </div>
       </div>
 
+      {/* "Your collection is full…" — shown when a capped player clicks to cross. Takes
+          precedence over the breeds note: a released flower is the one actionable fix. */}
+      {showFullMsg && full && ready && (
+        <p className="max-w-[15rem] text-center font-body text-xs leading-snug text-garden-gold">
+          {COLLECTION_FULL_MSG}
+        </p>
+      )}
+
       {/* "You've used all your breeds…" — shown when an exhausted player clicks to cross. */}
-      {showSpentMsg && exhausted && ready && (
+      {showSpentMsg && exhausted && !full && ready && (
         <p className="max-w-[15rem] text-center font-body text-xs leading-snug text-garden-gold">
           {BREEDS_SPENT_MSG}
         </p>

@@ -1,4 +1,4 @@
-import type { DragEvent, MouseEvent } from "react";
+import { useEffect, useState, type DragEvent, type MouseEvent } from "react";
 import type { Flower } from "../types";
 import { FlowerStatus, GenomeStatus } from "../types";
 import { useGame } from "../game/GameContext";
@@ -49,8 +49,15 @@ export function FlowerCard({
     canCheckMatch,
     checkMatch,
     dismissHint,
+    canRelease,
+    releaseFlower,
+    releasingId,
+    releaseNotice,
   } = useGame();
   const r = rarityStyle(flower.rarity);
+  // First click arms the release, second within ARM_MS sends it — a deliberate second step
+  // for an irreversible action, without a modal interrupting the garden.
+  const [armed, setArmed] = useState(false);
 
   const submitted = flower.status === FlowerStatus.Submitted;
   // The player already entered THIS round (one entry per round) — every other flower's submit
@@ -74,6 +81,33 @@ export function FlowerCard({
   const onCheckMatch = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation(); // don't also trigger the card's select/place
     checkMatch(flower);
+  };
+
+  // Release. Only ever offered for a flower the program would actually accept: the player's
+  // own sealed bloom that is still Active. A flower mid-cross or entered in the challenge is
+  // refused on-chain, so the control is simply absent rather than a button that fails —
+  // the card's existing "in this round's challenge" note already explains that case.
+  const releaseEligible =
+    showSubmit && flower.status === FlowerStatus.Active && flower.genomeStatus === GenomeStatus.Encrypted;
+  const releasing = releasingId === flower.id;
+  const releaseEnabled = canRelease(flower);
+
+  // Disarm if the player thinks better of it (or walks away) rather than leaving a card
+  // primed to delete on the next stray tap.
+  useEffect(() => {
+    if (!armed) return;
+    const t = window.setTimeout(() => setArmed(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [armed]);
+
+  const onRelease = (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation(); // don't also trigger the card's select/place
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    setArmed(false);
+    releaseFlower(flower);
   };
 
   const onDragStart = (e: DragEvent<HTMLButtonElement>) => {
@@ -220,6 +254,44 @@ export function FlowerCard({
             )}
           </>
         ))}
+
+      {releaseEligible && (
+        <>
+          <button
+            type="button"
+            onClick={onRelease}
+            disabled={!releaseEnabled || releasing}
+            title={
+              releasing
+                ? "Releasing this flower…"
+                : armed
+                  ? "Tap again to release this flower for good"
+                  : releaseEnabled
+                    ? "Let this flower go and free a collection slot"
+                    : "Releasing another flower — one at a time"
+            }
+            className={`w-full rounded-md border px-2 py-1 font-pixel text-[9px] uppercase tracking-wide transition
+              focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan
+              ${!releaseEnabled || releasing
+                ? "cursor-not-allowed border-garden-moss/40 bg-garden-deep/50 text-garden-parch/30"
+                : armed
+                  ? "border-garden-gold bg-garden-gold/20 text-garden-gold hover:bg-garden-gold/35"
+                  : "border-garden-moss/60 bg-transparent text-garden-parch/45 hover:border-garden-gold/60 hover:text-garden-gold/80"}`}
+          >
+            {releasing ? "Releasing…" : armed ? "Confirm release?" : "Release"}
+          </button>
+          {armed && !releasing && (
+            <span className="px-1 text-center font-body text-[9px] leading-tight text-garden-parch/50">
+              This bloom won&apos;t come back
+            </span>
+          )}
+          {releaseNotice?.flowerId === flower.id && (
+            <span className="px-1 text-center font-body text-[9px] leading-tight text-garden-parch/50">
+              {releaseNotice.message}
+            </span>
+          )}
+        </>
+      )}
     </div>
   );
 }

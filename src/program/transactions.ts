@@ -7,6 +7,7 @@
  *   start_breeding     — queue an MPC breeding of two owned parents under chosen environment.
  *   submit_entry       — submit one Active flower to the Open competition round.
  *   queue_private_hint — ask which of the round's target traits one OWN flower satisfies.
+ *   close_flower       — release one own Active hybrid, freeing a collection slot.
  *
  * Operator/authority instructions (open_round, queue_score_entry, reveal_top3, cancel*) are
  * deliberately NOT exposed here.
@@ -306,6 +307,12 @@ export interface GardenActions {
   /** Read one of the connected wallet's FlowerRecords by index (e.g. a new offspring). */
   fetchFlower: (index: number) => Promise<Flower | null>;
   /**
+   * Release one of the player's own hybrids: deletes the record, returns what it cost to keep
+   * on-chain, and frees a collection slot. Only ever succeeds for a flower that is the
+   * caller's, still Active (not mid-cross, not entered in a challenge), and not a starter.
+   */
+  closeFlower: (flowerRecord: PublicKey) => Promise<string>;
+  /**
    * Ask for a private hint on one of the player's OWN flowers: which of the open round's
    * target traits it satisfies. Returns the ephemeral private key the answer is sealed to —
    * the caller MUST keep it alive until it reads and decrypts the result (see QueueHintResult).
@@ -509,6 +516,29 @@ export function useGardenActions(): GardenActions {
     [program, publicKey, submit],
   );
 
+  // Release a hybrid back to the wild: close_flower deletes the FlowerRecord, refunds what it
+  // cost to keep on-chain to the owner in the same transaction, and decrements total_flowers
+  // so a collection slot opens up. Every rule is an on-chain account constraint (own flower,
+  // Active, non-starter, game not paused) — the UI mirrors them only to avoid offering a
+  // button that would certainly fail, never as the real check.
+  const closeFlower = useCallback(
+    async (flowerRecord: PublicKey): Promise<string> => {
+      if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
+      const owner = publicKey;
+      const tx = await program.methods
+        .closeFlower()
+        .accountsPartial({
+          owner,
+          config: configPda(),
+          profile: profilePda(owner),
+          flower: flowerRecord,
+        })
+        .transaction();
+      return submit(tx);
+    },
+    [program, publicKey, submit],
+  );
+
   // ---- private hint -------------------------------------------------------------------
   // Same x25519 + RescueCipher primitives as startBreeding, but the key lifetime is the
   // opposite: breeding seals nothing back to the player (the offspring is public), so it
@@ -623,11 +653,12 @@ export function useGardenActions(): GardenActions {
       migrateProfile,
       pollBreeding,
       fetchFlower: fetchFlowerRecord,
+      closeFlower,
       queuePrivateHint,
       fetchHintResult,
       decryptHint,
     }),
-    [ready, createProfile, claimStarters, startBreeding, submitEntry, migrateProfile, pollBreeding, fetchFlowerRecord, queuePrivateHint, fetchHintResult, decryptHint],
+    [ready, createProfile, claimStarters, startBreeding, submitEntry, migrateProfile, pollBreeding, fetchFlowerRecord, closeFlower, queuePrivateHint, fetchHintResult, decryptHint],
   );
 }
 

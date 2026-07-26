@@ -519,6 +519,104 @@ export type SecretGarden = {
       "args": []
     },
     {
+      "name": "closeFlower",
+      "docs": [
+        "V1: closes (deletes) one of the caller's own Active hybrid flowers, refunding its rent",
+        "to the owner and freeing a collection slot (`total_flowers -= 1`). All validity is",
+        "enforced by the `CloseFlower` account constraints:",
+        "- `flower.owner == owner` (only your own flowers);",
+        "- `flower.status == FLOWER_STATUS_ACTIVE` (excludes Locked mid-breed AND Submitted);",
+        "- `flower.genome_status == GENOME_STATUS_ENCRYPTED` (starters are NEVER deletable —",
+        "this is what preserves the `total_flowers - STARTER_COUNT` accounting invariant);",
+        "- `!config.paused` (a player-facing action, unlike the recovery instructions).",
+        "Anchor's `close = owner` returns the rent and prevents any double-close.",
+        "",
+        "The flower's PDA index is deliberately NOT reused: `next_flower_index` stays monotonic,",
+        "so the closed index is retired forever (no PDA re-init risk); the freed slot is tracked",
+        "purely by the `total_flowers` decrement."
+      ],
+      "discriminator": [
+        86,
+        204,
+        169,
+        186,
+        222,
+        121,
+        136,
+        11
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "docs": [
+            "The flower's owner; signs, and receives the reclaimed rent."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "Pause kill-switch: deleting is a player-facing action, blocked while paused."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "profile",
+          "docs": [
+            "Owner's profile — `total_flowers` is decremented to free the collection slot. The PDA",
+            "seeds bind it to the signer, so it is necessarily the caller's own profile."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "flower",
+          "docs": [
+            "The flower to delete. `close = owner` refunds its rent to the owner; the constraints",
+            "enforce ownership, that it is Active (not Locked/Submitted), and that it is a hybrid",
+            "(never a starter). No `seeds` needed: Anchor proves it is a program-owned FlowerRecord,",
+            "and the `owner` constraint proves it belongs to the signer."
+          ],
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "closeRound",
       "docs": [
         "Closes an Open round (round operator only; may close early or late)."
@@ -1900,7 +1998,13 @@ export type SecretGarden = {
         "enforced by the `ReclaimDeadOffspring` account constraints (experiment is dead, the",
         "offspring is the Locked flower bound to it both ways, rent destination == owner).",
         "Permissionless is safe because the rent destination is fixed to the flower's owner",
-        "regardless of who calls — the caller gains nothing. Works while paused (recovery)."
+        "regardless of who calls — the caller gains nothing. Works while paused (recovery).",
+        "",
+        "V1 (Option A) accounting: the dead offspring was counted in `total_flowers` at",
+        "`start_breeding` time (`+= 1`, done unconditionally for every started breed). Closing",
+        "its account here must therefore decrement `total_flowers`, or the collection cap would",
+        "permanently over-count phantom hybrids from failed breeds. This keeps",
+        "`total_flowers - STARTER_COUNT` an exact live-hybrid count."
       ],
       "discriminator": [
         156,
@@ -1944,6 +2048,37 @@ export type SecretGarden = {
             "lamports. Constrained above to equal `offspring.owner`."
           ],
           "writable": true
+        },
+        {
+          "name": "profile",
+          "docs": [
+            "The offspring owner's profile — decremented so `total_flowers` stops counting this",
+            "reclaimed dead hybrid (V1 Option A accounting). The PDA seeds bind it to",
+            "`offspring.owner`, so a permissionless caller cannot substitute a different profile.",
+            "(Declared after `offspring` so its `owner` field is available to the seeds.)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "offspring.owner",
+                "account": "flowerRecord"
+              }
+            ]
+          }
         }
       ],
       "args": []
@@ -2924,6 +3059,16 @@ export type SecretGarden = {
       "code": 6033,
       "name": "noActiveRound",
       "msg": "There is no active (open) round to request a hint for"
+    },
+    {
+      "code": 6034,
+      "name": "collectionFull",
+      "msg": "Your hybrid collection is full; delete some flowers to breed more"
+    },
+    {
+      "code": 6035,
+      "name": "starterNotDeletable",
+      "msg": "Starter flowers cannot be deleted"
     }
   ],
   "types": [

@@ -20,7 +20,7 @@ export function HybridCollection({
   onActivate: (flower: Flower) => void;
   variant: "desktop" | "mobile";
 }) {
-  const { shelf } = useGame();
+  const { shelf, hybridCount, collectionCap, collectionFull } = useGame();
   const { connected } = useGardener();
   const hybrids = shelf.filter(isHybrid);
   const desktop = variant === "desktop";
@@ -33,6 +33,29 @@ export function HybridCollection({
           {hybrids.length} {hybrids.length === 1 ? "Bloom" : "Blooms"}
         </Badge>
       </div>
+      {/* Slot usage. The count comes from the profile (the same figure the greenhouse checks
+          before a cross), so it stays honest even if a card hasn't been refetched yet.
+          A collection grown BEFORE the limit existed can sit above it — say so plainly
+          rather than render a puzzling "24 of 20". Releasing still works, and each release
+          brings the count down until crossing is possible again. */}
+      {connected && (
+        <div className="mb-2 shrink-0">
+          <p
+            className={`font-pixel text-[9px] uppercase tracking-wide ${
+              collectionFull ? "text-garden-gold" : "text-garden-parch/50"
+            }`}
+          >
+            {hybridCount > collectionCap
+              ? `${hybridCount} blooms — over the ${collectionCap} slot limit`
+              : `${hybridCount} of ${collectionCap} slots used`}
+          </p>
+          {collectionFull && (
+            <p className="mt-1 font-body text-[10px] leading-snug text-garden-gold">
+              Your collection is full — release a flower to breed again.
+            </p>
+          )}
+        </div>
+      )}
       <div className={desktop ? "gh-scroll -mr-1 min-h-0 flex-1 overflow-y-auto pb-1 pr-1" : ""}>
         {!connected ? (
           <p className="px-1 py-6 text-center font-pixel text-[9px] uppercase leading-relaxed tracking-wide text-garden-parch/40">

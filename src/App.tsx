@@ -64,6 +64,7 @@ function GardenApp() {
           lastBreedRound: playerProfile.lastBreedRound,
           hasEnteredCurrentRound,
           profileNeedsMigration,
+          totalFlowers: playerProfile.totalFlowers,
         }
       : {
           // Disconnected: visual starters in the garden, empty collection, public round info.

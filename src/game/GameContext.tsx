@@ -34,6 +34,10 @@ import {
   GenomeStatus,
   RoundStatus,
 } from "../types";
+// The one web3 type the context touches: close_flower identifies its target by account
+// address, and a Flower's `id` IS that address (see accounts.ts mapFlower). Same narrow
+// exception the hint flow makes in usePrivateHint.
+import { PublicKey } from "@solana/web3.js";
 import { MOCK_FLOWERS, MOCK_JOURNAL, MOCK_CHALLENGE, MOCK_WINNERS } from "../mocks/data";
 import { useGardenActions, TxError } from "../program/transactions";
 import { usePrivateHint, type HintNotice, type HintView } from "../hooks/usePrivateHint";
@@ -86,10 +90,27 @@ export interface GardenInitial {
   hasEnteredCurrentRound?: boolean;
   /** True when the connected wallet's profile is pre-5D and must be migrated before breed/submit. */
   profileNeedsMigration?: boolean;
+  /**
+   * PlayerProfile.total_flowers — starters INCLUDED. The collection cap counts hybrids only,
+   * so the UI subtracts STARTER_COUNT exactly as the program's check_collection_cap does.
+   */
+  totalFlowers?: number;
 }
 
 /** Per-round breeding cap enforced on-chain (MAX_BREEDS_PER_ROUND). */
 export const MAX_BREEDS_PER_ROUND = 5;
+
+/** Hybrid collection cap enforced on-chain (FLOWER_COLLECTION_CAP). Starters don't count. */
+export const FLOWER_COLLECTION_CAP = 20;
+
+/**
+ * The permanent starter flowers every player claims once (STARTER_COUNT). They are never
+ * deletable and never count toward the collection cap, so the live hybrid count is
+ * `total_flowers - STARTER_COUNT` — the same subtraction the program performs. Deliberately
+ * the constant, not GameConfig.starter_count: the on-chain cap check uses the constant too,
+ * so mirroring it keeps the UI's count and the program's verdict from ever disagreeing.
+ */
+export const STARTER_COUNT = 6;
 
 interface GameContextValue {
   shelf: Flower[];
@@ -112,6 +133,21 @@ interface GameContextValue {
   hasEnteredCurrentRound: boolean;
   /** How many crosses the player can still start this round (5 when standalone/no profile). */
   breedsRemaining: number;
+  // ---- hybrid collection cap (starters excluded, mirroring the on-chain accounting) ----
+  /** Live hybrids the player holds — `total_flowers - STARTER_COUNT`, floored at 0. */
+  hybridCount: number;
+  /** The cap those hybrids are counted against (FLOWER_COLLECTION_CAP). */
+  collectionCap: number;
+  /** True once the collection is full: breeding is blocked until a flower is released. */
+  collectionFull: boolean;
+  /** The flower currently being released (spinner/disable on its card), or null. */
+  releasingId: string | null;
+  /** Whether this flower may be released right now (own, Active, sealed bloom — not a starter). */
+  canRelease: (flower: Flower) => boolean;
+  /** Release a hybrid, freeing a slot. Refetches so the card and the counter both update. */
+  releaseFlower: (flower: Flower) => void;
+  /** Transient "Release cancelled." note, scoped to the card that raised it. */
+  releaseNotice: { flowerId: string; message: string } | null;
   /** Player-vocabulary breeding problem (e.g. low SOL) shown under the crossbreed CTA. */
   breedError: string | null;
   /** Transient "Breeding cancelled." note under the pot after a declined breed (auto-hides). */
@@ -215,6 +251,10 @@ export function GameProvider({
   const [activePhase, setActivePhase] = useState<ActivePhase | null>(null); // null = at rest
   const [breedError, setBreedError] = useState<string | null>(null);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [releasingId, setReleasingId] = useState<string | null>(null);
+  const [releaseNotice, setReleaseNotice] = useState<{ flowerId: string; message: string } | null>(
+    null,
+  );
   const [bloomToast, setBloomToast] = useState<string | null>(null);
   const [migrating, setMigrating] = useState(false);
   const [migrateError, setMigrateError] = useState<string | null>(null);
@@ -246,6 +286,11 @@ export function GameProvider({
   // A pre-5D profile must be migrated (one-time) before it can be written by breed/submit. We
   // never migrate silently — this drives the in-game notice and disables breed/submit until done.
   const profileNeedsMigration = initial?.profileNeedsMigration ?? false;
+
+  // Live hybrid count, derived the same way the program does it (total_flowers minus the
+  // permanent starters). Standalone/demo has no profile → 0, so the cap UI stays quiet.
+  const hybridCount = Math.max(0, (initial?.totalFlowers ?? STARTER_COUNT) - STARTER_COUNT);
+  const collectionFull = hybridCount >= FLOWER_COLLECTION_CAP;
   const refetchGarden = useCallback(
     (): Promise<boolean> => (onRefetch ? onRefetch() : Promise.resolve(false)),
     [onRefetch],
@@ -386,9 +431,10 @@ export function GameProvider({
   // When `onRefetch` is absent (standalone/demo with mocks) it walks a short timed cycle.
   const startCrossbreed = useCallback(() => {
     if (!bothPotsFilled || activePhase || !potA || !potB) return;
-    // Real mode only: never build a breed tx when the per-round cap is spent OR the profile
-    // still needs its one-time migration (the Hybrid Pot shows the matching message instead).
-    if (onRefetch && (breedsRemaining <= 0 || profileNeedsMigration)) return;
+    // Real mode only: never build a breed tx when the per-round cap is spent, the collection
+    // is full (the program would reject it with CollectionFull), OR the profile still needs
+    // its one-time migration. The Hybrid Pot shows the matching message in each case.
+    if (onRefetch && (breedsRemaining <= 0 || collectionFull || profileNeedsMigration)) return;
     clearTimers();
     setBreedError(null);
     setNewBloom(null);
@@ -460,7 +506,7 @@ export function GameProvider({
         }
       }
     })();
-  }, [bothPotsFilled, activePhase, potA, potB, environment, actions, onRefetch, clearTimers, breedsRemaining, profileNeedsMigration]);
+  }, [bothPotsFilled, activePhase, potA, potB, environment, actions, onRefetch, clearTimers, breedsRemaining, collectionFull, profileNeedsMigration]);
 
   // Real mode: the hybrid is already on-chain. Reset to idle immediately so the player can
   // keep playing, then refetch to reveal it. A refetch failure NEVER tears down the game
@@ -605,6 +651,61 @@ export function GameProvider({
     [onRefetch, canSubmit, actions, challenge.roundId, toast],
   );
 
+  // ---- release a hybrid (close_flower) --------------------------------------------------
+  // The on-chain constraints are the real gate; these mirror them so the UI never offers a
+  // button whose transaction is certain to be rejected:
+  //   Active     — a flower mid-cross (Breeding) or entered in a challenge (Submitted) is
+  //                refused with FlowerNotActive;
+  //   Encrypted  — starters are permanent (StarterNotDeletable), and it is that permanence
+  //                that keeps `total_flowers - STARTER_COUNT` an honest hybrid count.
+  const canRelease = useCallback(
+    (flower: Flower): boolean =>
+      !!onRefetch &&
+      releasingId === null &&
+      flower.status === FlowerStatus.Active &&
+      flower.genomeStatus === GenomeStatus.Encrypted,
+    [onRefetch, releasingId],
+  );
+
+  const releaseFlower = useCallback(
+    (flower: Flower) => {
+      if (!onRefetch || !canRelease(flower)) return;
+      setReleasingId(flower.id);
+      setReleaseNotice(null);
+      void (async () => {
+        try {
+          await actions.closeFlower(new PublicKey(flower.id));
+          // Gone on-chain: drop it from the shelf immediately (and from either pot, so a
+          // released flower can't sit in a pot that would now breed with a dead record),
+          // then refetch so total_flowers — and the slot counter — come from chain.
+          setShelf((s) => s.filter((f) => f.id !== flower.id));
+          setPotA((a) => (a?.id === flower.id ? null : a));
+          setPotB((b) => (b?.id === flower.id ? null : b));
+          void onRefetch();
+          if (mounted.current) toast.success("Flower released. Slot freed.");
+        } catch (e) {
+          if (!mounted.current) return;
+          // Declined → the same transient, self-clearing note the other actions use.
+          if (e instanceof TxError && e.kind === "rejected") {
+            setReleaseNotice({ flowerId: flower.id, message: "Release cancelled." });
+          } else {
+            toast.error("Couldn't release this flower. Try again.");
+          }
+        } finally {
+          if (mounted.current) setReleasingId(null);
+        }
+      })();
+    },
+    [onRefetch, canRelease, actions, toast],
+  );
+
+  // The "Release cancelled." note is transient, like the pot's "Breeding cancelled." note.
+  useEffect(() => {
+    if (!releaseNotice) return;
+    const t = window.setTimeout(() => setReleaseNotice(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [releaseNotice]);
+
   // Bloom toast tap: try the refresh again; clear the toast once the garden reloads.
   const retryRefresh = useCallback(() => {
     if (!onRefetch) return;
@@ -696,9 +797,17 @@ export function GameProvider({
       canCheckMatch,
       checkMatch,
       dismissHint,
+      hybridCount,
+      collectionCap: FLOWER_COLLECTION_CAP,
+      collectionFull,
+      releasingId,
+      canRelease,
+      releaseFlower,
+      releaseNotice,
     }),
     [
       hint, hintBusy, hintNotice, canCheckMatch, checkMatch, dismissHint,
+      hybridCount, collectionFull, releasingId, canRelease, releaseFlower, releaseNotice,
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
       newBloom, roundOpen, hasEnteredCurrentRound, breedsRemaining, breedError, breedNotice, dropBlockedNotice, journal, challenge, winners, activeTab, submittingId,
       bloomToast, authority, profileNeedsMigration, migrating, migrateError, migrateProfile, refetchGarden,
