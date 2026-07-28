@@ -1,10 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none">
+  <!-- Rounded garden-deep tile: the lavender petals are light, so the mark needs a dark
+       backdrop to stay legible in a light browser tab bar. Mirrors the landing-page hero,
+       where the same flower sits on the dark botanical background. -->
+  <rect width="32" height="32" rx="7" fill="#13251a"/>
   <g transform="translate(16 16)">
-    <ellipse cx="0" cy="-8" rx="4.5" ry="8" fill="#D4A017" transform="rotate(0)"/>
-    <ellipse cx="0" cy="-8" rx="4.5" ry="8" fill="#D4A017" transform="rotate(72)"/>
-    <ellipse cx="0" cy="-8" rx="4.5" ry="8" fill="#D4A017" transform="rotate(144)"/>
-    <ellipse cx="0" cy="-8" rx="4.5" ry="8" fill="#D4A017" transform="rotate(216)"/>
-    <ellipse cx="0" cy="-8" rx="4.5" ry="8" fill="#D4A017" transform="rotate(288)"/>
-    <circle r="4.5" fill="#8B6914"/>
+    <!-- 5 petals @72°, garden-lavender. Slightly chunkier than the 100-unit hero flower
+         (rx/ry 4/7 vs a scaled 3.5/6.4) so the silhouette survives at 16x16. -->
+    <ellipse cx="0" cy="-6.5" rx="4" ry="7" fill="#c1aef0" opacity="0.85" transform="rotate(0)"/>
+    <ellipse cx="0" cy="-6.5" rx="4" ry="7" fill="#c1aef0" opacity="0.85" transform="rotate(72)"/>
+    <ellipse cx="0" cy="-6.5" rx="4" ry="7" fill="#c1aef0" opacity="0.85" transform="rotate(144)"/>
+    <ellipse cx="0" cy="-6.5" rx="4" ry="7" fill="#c1aef0" opacity="0.85" transform="rotate(216)"/>
+    <ellipse cx="0" cy="-6.5" rx="4" ry="7" fill="#c1aef0" opacity="0.85" transform="rotate(288)"/>
+    <circle r="3.2" fill="#e6c25c"/>
   </g>
 </svg>
