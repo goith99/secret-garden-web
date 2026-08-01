@@ -41,15 +41,29 @@ function GardenApp() {
   // and defaults the new fields). We NEVER auto-migrate — `profileNeedsMigration` drives an
   // in-game "update your garden" notice; the player chooses when to run the one-time migrate.
 
+  // Setup is TWO separate confirmed transactions (create_profile, then claim_starters), so a
+  // wallet can legitimately own a PlayerProfile that has never claimed its starters — step 1
+  // confirmed and step 2 was declined, or the tab was closed in between. `starter_claimed` is
+  // the on-chain truth for "this garden has been set up"; gating on the profile's mere
+  // EXISTENCE stranded those wallets in the full game with an empty shelf and no route back to
+  // the claim screen, because GardenEmpty's own claim-only retry is local React state that a
+  // reload throws away.
+  const needsSetup = !playerProfile || !playerProfile.starterClaimed;
+
   // Connected-only gates. Gated strictly on `connected` so a disconnected visitor never hits
   // them, regardless of how the public read resolves.
   if (connected) {
     // First load (no garden yet) shows the tending state; a background refresh keeps it up.
-    if (loading && !playerProfile) return <GardenLoading />;
-    // ONLY a connected wallet whose own garden genuinely failed to load (no profile after the
-    // fetch) sees this. A failed background refetch keeps the game on screen (see bloom toast).
+    if (loading && needsSetup) return <GardenLoading />;
+    // ONLY a connected wallet whose own garden genuinely failed to load (nothing decoded at
+    // all) sees this. A failed background refetch keeps the game on screen (see bloom toast);
+    // a half-set-up wallet keeps the claim screen below, which has its own retry.
     if (error && !playerProfile) return <GardenError message={error} onRetry={refetch} />;
-    if (!playerProfile) return <GardenEmpty onRefresh={refetch} />;
+    // `profileExists` tells the claim screen step 1 is already done on-chain, so its retry
+    // goes straight to claim_starters instead of re-running create_profile.
+    if (needsSetup) {
+      return <GardenEmpty onRefresh={refetch} profileExists={!!playerProfile} />;
+    }
   }
 
   const initial: GardenInitial =

@@ -33,26 +33,38 @@ export function GardenLoading() {
   );
 }
 
-/** Button labels for the two setup steps; idle label depends on whether only the claim is left. */
-const STEP_LABEL = {
-  creating: "Setting up your garden… (1 of 2)",
-  claiming: "Claiming your flowers… (2 of 2)",
-} as const;
-
 /**
- * A connected wallet with no garden yet (no PlayerProfile, or one without starters). Setup is
- * TWO confirmed transactions — create_profile (1 of 2) then claim_starters (2 of 2) — so the
- * button reports which step it's on. If the profile gets created but the claim is declined, the
- * retry only re-runs the claim (the profile already exists on-chain). Success raises a toast and
- * refetches so the garden loads with the six new flowers.
+ * A connected wallet with no garden yet: either no PlayerProfile at all, or one whose
+ * `starter_claimed` is still false. Setup is TWO confirmed transactions — create_profile
+ * (1 of 2) then claim_starters (2 of 2) — so the button reports which step it's on.
+ *
+ * `profileExists` is the on-chain answer to "is step 1 already done": App reads it from the
+ * profile account, so a player who confirmed create_profile and then declined (or closed the
+ * tab on) claim_starters comes back to a screen that retries the CLAIM ONLY. Relying on local
+ * state for that was the bug — a reload reset it, and re-running create_profile against an
+ * existing PDA is pointless. Success raises a toast and refetches so the garden loads with the
+ * six new flowers.
  */
-export function GardenEmpty({ onRefresh }: { onRefresh: () => void }) {
+export function GardenEmpty({
+  onRefresh,
+  profileExists = false,
+}: {
+  onRefresh: () => void;
+  profileExists?: boolean;
+}) {
   const { createProfile, claimStarters, ready } = useGardenActions();
   const toast = useToast();
   const [busy, setBusy] = useState<"idle" | "creating" | "claiming">("idle");
-  // Once the profile exists (step 1 done), a retry should skip straight to claiming.
-  const [claimOnly, setClaimOnly] = useState(false);
+  // Step 1 done DURING this mount. Combined with the on-chain `profileExists` below rather
+  // than seeded from it, so a refetch that flips `profileExists` can't be shadowed by a stale
+  // useState initial value.
+  const [profileMade, setProfileMade] = useState(false);
+  const claimOnly = profileExists || profileMade;
   const [problem, setProblem] = useState<string | null>(null);
+  // Starters are claimed and confirmed on-chain; we're only waiting for the read to catch up.
+  // Without this, a refetch that still returns the pre-claim profile would put the claim button
+  // back in front of the player, and a second claim_starters would fail on-chain.
+  const [claimed, setClaimed] = useState(false);
 
   const onSetup = async () => {
     setProblem(null);
@@ -62,10 +74,12 @@ export function GardenEmpty({ onRefresh }: { onRefresh: () => void }) {
       if (!claimOnly) {
         setBusy("creating");
         await createProfile();
+        setProfileMade(true); // step 1 confirmed — any retry from here is claim-only
       }
       step = "claim";
       setBusy("claiming");
       await claimStarters();
+      setClaimed(true);
       toast.success(
         claimOnly
           ? "6 starter flowers claimed! Start breeding. 🌺"
@@ -76,23 +90,22 @@ export function GardenEmpty({ onRefresh }: { onRefresh: () => void }) {
       const kind = e instanceof TxError ? e.kind : "failed";
       if (kind === "rejected") {
         if (step === "create") {
+          // Nothing was created — a plain cancel. Button re-enables, no toast.
           setProblem("Setup cancelled. Tap to try again.");
-        } else if (claimOnly) {
-          // A claim-only retry that's declined again: re-enable, no error (their choice).
-          setProblem(null);
         } else {
-          // Profile created, claim declined → retry should claim only.
-          setClaimOnly(true);
-          setProblem("Your garden is ready but flowers couldn't be claimed. Tap to claim them.");
+          // The profile is on-chain either way (we just made it, or it already was), so the
+          // retry must be claim-only. setProfileMade is idempotent when profileExists is true.
+          setProfileMade(true);
+          setProblem("Your garden is ready, but the flowers weren't claimed. Tap to try again.");
         }
       } else if (kind === "insufficient") {
         setProblem("Your garden needs a little more SOL to grow. Add funds and try again.");
       } else if (kind === "network") {
-        setProblem(e instanceof TxError ? e.message : "Something went wrong. Check your connection and try again.");
-      } else if (claimOnly) {
-        toast.error("Couldn't claim flowers. Try again.");
+        setProblem(e instanceof TxError ? e.message : "Something went wrong. Try again.");
       } else {
-        setProblem("Something went wrong. Check your connection and try again.");
+        // A genuine failure at either step (not a decline) — generic toast, per spec.
+        if (step === "claim") setProfileMade(true);
+        toast.error("Something went wrong. Try again.");
       }
     } finally {
       setBusy("idle");
@@ -100,11 +113,15 @@ export function GardenEmpty({ onRefresh }: { onRefresh: () => void }) {
   };
 
   const label =
-    busy !== "idle"
-      ? STEP_LABEL[busy]
-      : claimOnly
-        ? "Claim Your Flowers"
-        : "Claim Your Starter Flowers";
+    busy === "creating"
+      ? "Setting up your garden… (1 of 2)"
+      : busy === "claiming"
+        ? claimOnly
+          ? "Claiming your flowers…"
+          : "Claiming your flowers… (2 of 2)"
+        : claimed
+          ? "Growing your garden…"
+          : "Claim Your Starter Flowers";
 
   return (
     <Centered>
@@ -113,16 +130,24 @@ export function GardenEmpty({ onRefresh }: { onRefresh: () => void }) {
           🌱
         </span>
         <h2 className="font-pixel text-lg uppercase tracking-[0.18em] text-garden-mint">
-          Your garden is empty
+          {claimed
+            ? "Your flowers are planted"
+            : claimOnly
+              ? "Your garden is ready"
+              : "Your garden is empty"}
         </h2>
         <p className="font-body text-sm leading-relaxed text-garden-parch/80">
-          Claim your six starter flowers to begin growing and crossbreeding.
+          {claimed
+            ? "All six starters are yours. Loading your garden…"
+            : claimOnly
+              ? "One step left — claim your six starter flowers to begin."
+              : "Claim your six starter flowers to begin growing and crossbreeding."}
         </p>
         <div className="w-64">
           <PlayerButton
             variant="action"
-            busy={busy !== "idle"}
-            disabled={busy !== "idle" || !ready}
+            busy={busy !== "idle" || claimed}
+            disabled={busy !== "idle" || claimed || !ready}
             onClick={onSetup}
           >
             {label}
