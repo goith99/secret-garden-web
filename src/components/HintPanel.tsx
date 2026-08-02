@@ -5,19 +5,19 @@ import type { HintView } from "../hooks/usePrivateHint";
  * The "Check Match" result for ONE of the player's own flowers: the score this challenge
  * will actually award it, and the traits behind that number.
  *
- *   ┌──────────────────────────────┐
- *   │  Score: 100                  │
- *   │  1 of 3 traits · +90 for age │
- *   │  ✓ Mutant                    │
- *   │  ✗ Full Bloom                │
- *   │  ✗ Tall                      │
- *   └──────────────────────────────┘
+ *   ┌────────────────────────────────────────┐
+ *   │  100%                                  │
+ *   │  1 of 3 traits · +90 for age · capped  │
+ *   │  ✓ Mutant                              │
+ *   │  ✗ Full Bloom                          │
+ *   │  ✗ Tall                                │
+ *   └────────────────────────────────────────┘
  *
- * The headline is the SCORE, not the trait fraction, because those are different numbers:
- * an older flower earns +5 per generation on top of its traits, which is why a flower can
- * read 1 of 3 traits and still score 100. Showing the fraction on its own line keeps that
- * from looking like a bug — the score is the number that decides the round, and the line
- * under it says where the score came from.
+ * The headline number is the SCORE the challenge will award (see `scoreOf`), not the raw
+ * trait fraction — those are different numbers, because an older flower earns +5 per
+ * generation on top of its traits. That is why a flower can read 1 of 3 traits and still
+ * show 100%. The line underneath says where the number came from, so the fraction and the
+ * percentage never look like they disagree.
  *
  * Styled to the game's dark botanical palette (deep bed, moss border, gold/mint for a match,
  * dimmed parchment for a miss) rather than a generic score card. Player vocabulary only —
@@ -46,7 +46,10 @@ export function HintPanel({ hint, onDismiss }: { hint: HintView; onDismiss: () =
     <div className="animate-rise rounded-md border border-garden-moss/70 bg-garden-deep/80 p-2 shadow-panel">
       <div className="mb-0.5 flex items-center justify-between gap-1">
         <span className={`font-pixel text-[10px] uppercase tracking-wide ${tone}`}>
-          Score: {hint.score}
+          {/* Spoken with context — the bare number has a visible panel around it to explain
+              itself, a screen reader reaching this span alone does not. */}
+          <span className="sr-only">Challenge score: </span>
+          {hint.score}%
         </span>
         <button
           type="button"
@@ -64,8 +67,10 @@ export function HintPanel({ hint, onDismiss }: { hint: HintView; onDismiss: () =
         {hint.matchedCount} of {hint.targetCount} traits
         {hint.generationBonus > 0 && <> · +{hint.generationBonus} for age</>}
         {/* Reached the 100 cap on age rather than a clean sweep — say so, otherwise the
-            trait line and the score look like they disagree. */}
-        {hint.score === 100 && hint.matchedCount < hint.targetCount && <> · maxed</>}
+            trait line and the percentage look like they disagree. "capped" rather than
+            "maxed" now the headline is a percentage: it reads as "100% is the ceiling, not
+            a perfect match", which is exactly the case this flags. */}
+        {hint.score === 100 && hint.matchedCount < hint.targetCount && <> · capped</>}
       </p>
       <ul className="flex flex-col gap-0.5">
         {hint.traits.map((t) => (
