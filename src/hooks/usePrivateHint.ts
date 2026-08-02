@@ -60,8 +60,17 @@ export interface HintView {
   traits: HintTrait[];
   /** Names of the traits this flower satisfies. */
   matchedTraits: string[];
-  /** matched / target_trait_count as a whole percentage. */
-  percentage: number;
+  /**
+   * The score `score_entry` will actually assign this flower — NOT the raw trait fraction.
+   * See `scoreOf` for why those are different numbers.
+   */
+  score: number;
+  /** How many of the round's target traits this flower satisfies. */
+  matchedCount: number;
+  /** How many traits the round is asking for (score_entry's divisor). */
+  targetCount: number;
+  /** The generation component of `score`; 0 for a generation-1 flower. */
+  generationBonus: number;
   /** Player-facing failure text (phase "error" only). */
   error: string | null;
 }
@@ -88,27 +97,85 @@ export interface PrivateHintApi {
 }
 
 /**
- * Decode the sealed byte into the round's target traits. Bit i corresponds to
- * target_traits[i]; bits at or above target_trait_count are always clear. The count comes
- * from the RESULT (the round as it was at request time), bounded by the trait ids we
- * actually have, so a round that changed underneath us can never index past the array.
+ * The competition score for a flower, byte-for-byte the same number `score_entry` computes
+ * on-chain. Kept as a standalone function so it can be checked against the circuit directly.
+ *
+ * Mirrors encrypted-ixs/src/lib.rs `score_entry` EXACTLY:
+ *
+ *     let safe_count = if target_trait_count == 0 { 1 } else { target_trait_count };
+ *     let base: u16   = (matched as u16 * 100) / (safe_count as u16);   // INTEGER division
+ *     let bonus: u16  = if generation > 1 { (generation - 1) * 5 } else { 0 };
+ *     let score       = if base + bonus > 100 { 100 } else { base + bonus };
+ *
+ * Two details that are easy to get wrong, and were both wrong here before:
+ *
+ *  1. TRUNCATION, not rounding. Rust's `/` on integers floors. The old code used
+ *     Math.round, which disagreed at 2 of 3 traits — the circuit scores 66, the panel
+ *     claimed 67. (2/3 is the only fraction where they diverge for counts 2..4.)
+ *  2. THE GENERATION BONUS IS PART OF THE SCORE. The old code ignored it entirely, so a
+ *     high-generation flower could read "0%" here and still be assigned the maximum 100
+ *     on-chain — the bonus alone reaches the cap at generation 21.
+ *
+ * `generation` is FlowerRecord.generation, the same public field score_entry reads
+ * (`ctx.accounts.flower_record.generation`), so no extra fetch is needed.
+ *
+ * Not emulated: the u16 overflow in `(generation - 1) * 5` past generation 13108. A
+ * generation costs one confirmed breed, so that is unreachable.
+ */
+export function scoreOf(
+  matchedCount: number,
+  targetTraitCount: number,
+  generation: number,
+): number {
+  const safeCount = targetTraitCount === 0 ? 1 : targetTraitCount;
+  const base = Math.floor((matchedCount * 100) / safeCount);
+  const bonus = generation > 1 ? (generation - 1) * 5 : 0;
+  return Math.min(100, base + bonus);
+}
+
+/**
+ * Decode the sealed byte into the round's target traits, and score it. Bit i corresponds to
+ * target_traits[i]; bits at or above target_trait_count are always clear.
+ *
+ * The MATCH COUNT is taken over the result's own `target_trait_count`, because that is the
+ * divisor score_entry uses. The trait NAMES are listed only for ids we actually hold, so a
+ * round that rolled over underneath us can never index past the array — the two loops are
+ * separate for that reason.
  */
 function decodeBitmask(
   bitmask: number,
   targetTraits: number[],
   targetTraitCount: number,
-): { traits: HintTrait[]; matchedTraits: string[]; percentage: number } {
-  const count = Math.min(targetTraitCount, targetTraits.length);
+  generation: number,
+): {
+  traits: HintTrait[];
+  matchedTraits: string[];
+  score: number;
+  matchedCount: number;
+  generationBonus: number;
+} {
+  let matchedCount = 0;
+  for (let i = 0; i < targetTraitCount; i++) {
+    if (((bitmask >>> i) & 1) === 1) matchedCount++;
+  }
+
+  const named = Math.min(targetTraitCount, targetTraits.length);
   const traits: HintTrait[] = [];
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < named; i++) {
     traits.push({
       name: traitName(targetTraits[i]),
       matched: ((bitmask >>> i) & 1) === 1,
     });
   }
+
   const matchedTraits = traits.filter((t) => t.matched).map((t) => t.name);
-  const percentage = count > 0 ? Math.round((matchedTraits.length / count) * 100) : 0;
-  return { traits, matchedTraits, percentage };
+  return {
+    traits,
+    matchedTraits,
+    score: scoreOf(matchedCount, targetTraitCount, generation),
+    matchedCount,
+    generationBonus: generation > 1 ? (generation - 1) * 5 : 0,
+  };
 }
 
 export function usePrivateHint(
@@ -208,7 +275,10 @@ export function usePrivateHint(
         phase: "requesting",
         traits: [],
         matchedTraits: [],
-        percentage: 0,
+        score: 0,
+        matchedCount: 0,
+        targetCount: 0,
+        generationBonus: 0,
         error: null,
       });
 
@@ -228,7 +298,10 @@ export function usePrivateHint(
           phase: "error",
           traits: [],
           matchedTraits: [],
-          percentage: 0,
+          score: 0,
+          matchedCount: 0,
+          targetCount: 0,
+          generationBonus: 0,
           error: message,
         });
       };
@@ -282,13 +355,23 @@ export function usePrivateHint(
           release();
           if (!isCurrent()) return;
 
-          const decoded = decodeBitmask(bitmask, challenge.targetTraits, result.targetTraitCount);
+          // `flower.generation` is FlowerRecord.generation — the same value score_entry is
+          // handed on-chain, so the score below is the one the round will actually assign.
+          const decoded = decodeBitmask(
+            bitmask,
+            challenge.targetTraits,
+            result.targetTraitCount,
+            flower.generation,
+          );
           setHint({
             flowerId: flower.id,
             phase: "ready",
             traits: decoded.traits,
             matchedTraits: decoded.matchedTraits,
-            percentage: decoded.percentage,
+            score: decoded.score,
+            matchedCount: decoded.matchedCount,
+            targetCount: result.targetTraitCount,
+            generationBonus: decoded.generationBonus,
             error: null,
           });
         } catch (e) {
