@@ -106,6 +106,32 @@ function classifyError(e: unknown): TxError {
   const code = (e as { code?: number })?.code;
   const lower = msg.toLowerCase();
 
+  // ORDER MATTERS. Wrong-network signals are checked BEFORE the rejection signals below,
+  // because a wallet reports both through the same error class and the rejection test is the
+  // broader one — running it first swallowed genuine network failures as "the user cancelled",
+  // which left the network guard unarmed and the player looking at "Setup cancelled" forever.
+
+  // The standard wallet adapter throws a BARE WalletSendTransactionError — no message, no
+  // wrapped cause — from exactly one place: the pre-send check that the connected account
+  // supports the chain the app asked for (@solana/wallet-standard-wallet-adapter-base,
+  // adapter.ts, `if (!account.chains.includes(chain)) throw new WalletSendTransactionError()`).
+  // That IS the wallet telling us it is not on devnet. Its message-carrying sibling wraps a
+  // real underlying send error and is handled further down.
+  if (name === "WalletSendTransactionError" && !msg) {
+    return new TxError("network", "Make sure your wallet is set to Devnet and try again.");
+  }
+  // Wrong network: a devnet tx submitted to another cluster (common with wallets the dApp
+  // can't pin to devnet, e.g. Phantom) can't find the devnet blockhash or the program account.
+  // Flag it so the network guard can take over the screen and prompt a switch to Devnet.
+  if (
+    lower.includes("blockhash not found") ||
+    lower.includes("blockhashnotfound") ||
+    lower.includes("program that does not exist") ||
+    lower.includes("programaccountnotfound") ||
+    lower.includes("invalid program for execution")
+  ) {
+    return new TxError("network", "Make sure your wallet is set to Devnet and try again.");
+  }
   // Wallet popup closed / user declined — treat as a no-op cancel (caller shows nothing or a
   // gentle "cancelled" note). Phantom reports "User rejected …"; Solflare "Transaction
   // cancelled" or EIP-1193 code 4001. Anything else is a genuine failure (handled below).
@@ -121,18 +147,6 @@ function classifyError(e: unknown): TxError {
     lower.includes("canceled")
   ) {
     return new TxError("rejected", msg);
-  }
-  // Wrong network: a devnet tx submitted to another cluster (common with wallets the dApp
-  // can't pin to devnet, e.g. Phantom) can't find the devnet blockhash or the program account.
-  // Flag it so the network guard can take over the screen and prompt a switch to Devnet.
-  if (
-    lower.includes("blockhash not found") ||
-    lower.includes("blockhashnotfound") ||
-    lower.includes("program that does not exist") ||
-    lower.includes("programaccountnotfound") ||
-    lower.includes("invalid program for execution")
-  ) {
-    return new TxError("network", "Make sure your wallet is set to Devnet and try again.");
   }
   // Not enough SOL to pay fees / rent for the new accounts.
   if (

@@ -11,6 +11,7 @@ import { DesktopLayout } from "./layouts/DesktopLayout";
 import { MobileLayout } from "./layouts/MobileLayout";
 import { GardenEmpty, GardenError, GardenLoading } from "./screens/GardenStates";
 import { HowToPlayModal } from "./components/HowToPlayModal";
+import { NetworkBanner } from "./components/NetworkBanner";
 import { ToastProvider } from "./components/Toast";
 import { MOCK_STARTERS } from "./mocks/data";
 
@@ -118,6 +119,9 @@ function Gate() {
 
   return (
     <>
+      {/* Non-blocking wrong-network warning. Renders nothing unless there's real evidence, and
+          stays out of the way when SwitchNetworkScreen has already taken over the page. */}
+      <NetworkBanner />
       {view}
       {showHowToPlay && <HowToPlayModal onClose={() => setShowHowToPlay(false)} />}
     </>

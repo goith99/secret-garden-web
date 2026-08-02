@@ -26,7 +26,31 @@
  */
 export const DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 
-export const DEVNET_ENDPOINTS: readonly string[] = [
+/**
+ * Every endpoint here MUST contain "devnet" as a whole word.
+ *
+ * This is not cosmetic. @solana/wallet-standard-wallet-adapter-base derives the chain it asks
+ * the wallet to send on from the app's RPC URL, via getChainForEndpoint(), which is a plain
+ * regex over the string: `/\bdevnet\b/i` wins, and ANYTHING unmatched falls through to
+ * `solana:mainnet`. An endpoint named without that word — "solanadevnet.foo", or a provider URL
+ * that only carries an API key — would silently make the app ask the wallet for MAINNET, which
+ * is the exact failure this module's genesis-hash check exists to prevent, arriving through a
+ * different door.
+ *
+ * Asserted at module load so a bad endpoint fails loudly here rather than at signing time.
+ */
+function assertDevnetNamed(endpoints: readonly string[]): readonly string[] {
+  const bad = endpoints.filter((e) => !/\bdevnet\b/i.test(e));
+  if (bad.length > 0) {
+    throw new Error(
+      `RPC endpoint(s) missing the word "devnet": ${bad.join(", ")}. ` +
+        "The wallet adapter would infer solana:mainnet and sign on the wrong network.",
+    );
+  }
+  return endpoints;
+}
+
+export const DEVNET_ENDPOINTS: readonly string[] = assertDevnetNamed([
   // Primary — the official public node. Full method support, generous limits, proper CORS.
   "https://api.devnet.solana.com",
   // Fallback — Tatum's public devnet gateway. Serves every read the PLAYER path needs
@@ -36,7 +60,7 @@ export const DEVNET_ENDPOINTS: readonly string[] = [
   // is paid-only — which degrades ONLY the authority-gated operator panel
   // (useOperatorActions.fetchRoundEntries / queueRevealTop3), never a player's own garden.
   "https://solana-devnet.gateway.tatum.io",
-];
+]);
 
 /**
  * One JSON-RPC round trip asking the node which chain it is. Resolves true only for a node

@@ -28,6 +28,37 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useProgram } from "../program/client";
 import { fetchGameConfig } from "../program/accounts";
 
+/**
+ * Wallet-standard chain id for devnet. Hard-coded rather than imported from
+ * @solana/wallet-standard-chains: that package is only present transitively, and this is a
+ * frozen protocol string (CAIP-2 style), not a version-sensitive API.
+ */
+const DEVNET_CHAIN = "solana:devnet";
+
+/**
+ * The chains the connected account declares, or null when we cannot tell.
+ *
+ * Phantom and friends register as Standard Wallets, so wallet-adapter discards the legacy
+ * adapter this app constructs and wraps the standard wallet instead (see
+ * useStandardWalletAdapters — it even console.warns that the manual adapter can be removed).
+ * StandardWalletAdapter exposes the underlying wallet publicly, which is how we can read the
+ * account's declared chains at all.
+ *
+ * Duck-typed on purpose: a legacy (non-standard) adapter has no `.wallet`, and we must return
+ * null — "unknown" — rather than guess, so the caller never warns on missing evidence.
+ */
+function readAccountChains(adapter: unknown): readonly string[] | null {
+  const standardWallet = (
+    adapter as {
+      wallet?: { accounts?: readonly { chains?: readonly string[] }[] };
+    } | null
+  )?.wallet;
+  const accounts = standardWallet?.accounts;
+  if (!Array.isArray(accounts) || accounts.length === 0) return null;
+  const chains = accounts.flatMap((a) => (Array.isArray(a?.chains) ? a.chains : []));
+  return chains.length > 0 ? chains : null;
+}
+
 export interface NetworkGuard {
   /** True once a transaction revealed the wallet is on the wrong network. Gates the game UI. */
   wrongNetwork: boolean;
@@ -35,6 +66,21 @@ export interface NetworkGuard {
   checking: boolean;
   /** Connected wallet's display name (e.g. "Phantom"), for per-wallet switch instructions. */
   walletName: string | null;
+  /**
+   * PRE-transaction proof that this wallet cannot send on devnet: the connected account
+   * declares its chains and devnet is not among them, so the adapter would refuse the send
+   * before a popup ever opens. Only ever true on positive evidence — a wallet that declares
+   * devnet (or declares nothing) leaves this false, because `chains` is what the account
+   * SUPPORTS, not which cluster it is currently pointed at.
+   */
+  chainMismatch: boolean;
+  /**
+   * A wrong network was reported at least once for this wallet. Latches until the wallet
+   * changes, so it survives "Check Again" — that button clears the blocking screen without
+   * proving anything about the wallet, and the player deserves a standing reminder before
+   * they spend another approval.
+   */
+  suspectedWrongNetwork: boolean;
   /** Called by the send path when a transaction fails in a way that indicates wrong network. */
   reportWrongNetwork: () => void;
   /** Re-check + clear the block so the player can retry their action. */
@@ -45,6 +91,8 @@ const NOOP: NetworkGuard = {
   wrongNetwork: false,
   checking: false,
   walletName: null,
+  chainMismatch: false,
+  suspectedWrongNetwork: false,
   reportWrongNetwork: () => {},
   checkAgain: () => {},
 };
@@ -64,15 +112,25 @@ export function NetworkGuardProvider({ children }: { children: ReactNode }) {
 
   const [wrongNetwork, setWrongNetwork] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [suspectedWrongNetwork, setSuspected] = useState(false);
+
+  // Cheap enough to derive every render, and deriving it means an account swap inside the same
+  // wallet is picked up without a subscription to standard:events.
+  const chains = readAccountChains(wallet?.adapter ?? null);
+  const chainMismatch = chains !== null && !chains.includes(DEVNET_CHAIN);
 
   // A fresh wallet (connect / switch / disconnect) starts unjudged — reacting to the wallet
   // (an external system) changing identity, which this rule explicitly allows.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setWrongNetwork(false);
+    setSuspected(false);
   }, [address]);
 
-  const reportWrongNetwork = useCallback(() => setWrongNetwork(true), []);
+  const reportWrongNetwork = useCallback(() => {
+    setWrongNetwork(true);
+    setSuspected(true); // stays set after "Check Again" clears the blocking screen
+  }, []);
 
   const checkAgain = useCallback(() => {
     // We can't read the wallet's selected cluster directly, so this confirms the app can
@@ -94,8 +152,24 @@ export function NetworkGuardProvider({ children }: { children: ReactNode }) {
   }, [program]);
 
   const value = useMemo<NetworkGuard>(
-    () => ({ wrongNetwork, checking, walletName, reportWrongNetwork, checkAgain }),
-    [wrongNetwork, checking, walletName, reportWrongNetwork, checkAgain],
+    () => ({
+      wrongNetwork,
+      checking,
+      walletName,
+      chainMismatch,
+      suspectedWrongNetwork,
+      reportWrongNetwork,
+      checkAgain,
+    }),
+    [
+      wrongNetwork,
+      checking,
+      walletName,
+      chainMismatch,
+      suspectedWrongNetwork,
+      reportWrongNetwork,
+      checkAgain,
+    ],
   );
 
   return (
