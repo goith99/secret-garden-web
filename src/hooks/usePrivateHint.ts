@@ -103,18 +103,20 @@ export interface PrivateHintApi {
  * Mirrors encrypted-ixs/src/lib.rs `score_entry` EXACTLY:
  *
  *     let safe_count = if target_trait_count == 0 { 1 } else { target_trait_count };
- *     let base: u16   = (matched as u16 * 100) / (safe_count as u16);   // INTEGER division
- *     let bonus: u16  = if generation > 1 { (generation - 1) * 5 } else { 0 };
- *     let score       = if base + bonus > 100 { 100 } else { base + bonus };
+ *     let base: u16          = (matched as u16 * 70) / (safe_count as u16);
+ *     let gen_bonus_raw: u16 = min(2 * (generation - 1), 30);   // 0 when generation <= 1
+ *     let gen_bonus: u16     = (matched as u16 * gen_bonus_raw) / (safe_count as u16);
+ *     let score              = base + gen_bonus;                // 100 exactly at ratio 1
  *
  * Two details that are easy to get wrong, and were both wrong here before:
  *
  *  1. TRUNCATION, not rounding. Rust's `/` on integers floors. The old code used
  *     Math.round, which disagreed at 2 of 3 traits — the circuit scores 66, the panel
  *     claimed 67. (2/3 is the only fraction where they diverge for counts 2..4.)
- *  2. THE GENERATION BONUS IS PART OF THE SCORE. The old code ignored it entirely, so a
- *     high-generation flower could read "0%" here and still be assigned the maximum 100
- *     on-chain — the bonus alone reaches the cap at generation 21.
+ *  2. THE GENERATION BONUS IS PART OF THE SCORE, and it is MULTIPLIED by the trait-match
+ *     ratio rather than added flat (the "synergy multiplier"). Generation can no longer
+ *     substitute for matches: zero matched traits scores ZERO at any generation, and the
+ *     generation term only reaches its +30 ceiling when every target trait is matched.
  *
  * `generation` is FlowerRecord.generation, the same public field score_entry reads
  * (`ctx.accounts.flower_record.generation`), so no extra fetch is needed.
@@ -128,9 +130,48 @@ export function scoreOf(
   generation: number,
 ): number {
   const safeCount = targetTraitCount === 0 ? 1 : targetTraitCount;
-  const base = Math.floor((matchedCount * 100) / safeCount);
-  const bonus = generation > 1 ? (generation - 1) * 5 : 0;
-  return Math.min(100, base + bonus);
+  // Multiply THEN divide, matching the circuit exactly — computing the ratio first would
+  // truncate it to 0 or 1 in integer arithmetic and destroy the formula.
+  const base = Math.floor((matchedCount * 70) / safeCount);
+  const genBonus = Math.floor((matchedCount * generationBonusRawOf(generation)) / safeCount);
+  return Math.min(100, base + genBonus);
+}
+
+/**
+ * The generation term BEFORE the trait-ratio multiplier: `min(2 * (generation - 1), 30)`,
+ * 0 at generation <= 1. Mirrors the circuit:
+ *
+ *     let gen_bonus_raw: u16 = if generation >= 16 { 30 }
+ *                              else if generation > 1 { 2 * (generation - 1) }
+ *                              else { 0 };
+ *
+ * The `>= 16` short-circuit is exactly `min(2 * (generation - 1), 30)` for every input
+ * (2 * 15 == 30), written this way to avoid overflow/underflow at the extremes.
+ *
+ * This is the RAW ceiling, NOT what a flower actually receives — see `generationBonusOf`.
+ */
+function generationBonusRawOf(generation: number): number {
+  if (generation >= 16) return 30;
+  return generation > 1 ? 2 * (generation - 1) : 0;
+}
+
+/**
+ * The generation component a flower ACTUALLY receives: the raw ceiling scaled by how much of
+ * the round it matched — `floor(matched * min(2 * (generation - 1), 30) / target_count)`.
+ *
+ * SYNERGY MULTIPLIER (permanent formula; replaced the temporary +25 flat cap). Generation
+ * amplifies real matches rather than standing in for them: with zero matched traits this is
+ * zero at ANY generation, so an old garden can no longer out-score a new one on age alone.
+ *
+ * Shared by `scoreOf` and the panel's displayed bonus so the two can never disagree.
+ */
+export function generationBonusOf(
+  matchedCount: number,
+  targetTraitCount: number,
+  generation: number,
+): number {
+  const safeCount = targetTraitCount === 0 ? 1 : targetTraitCount;
+  return Math.floor((matchedCount * generationBonusRawOf(generation)) / safeCount);
 }
 
 /**
@@ -174,7 +215,7 @@ function decodeBitmask(
     matchedTraits,
     score: scoreOf(matchedCount, targetTraitCount, generation),
     matchedCount,
-    generationBonus: generation > 1 ? (generation - 1) * 5 : 0,
+    generationBonus: generationBonusOf(matchedCount, targetTraitCount, generation),
   };
 }
 
