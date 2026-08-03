@@ -387,8 +387,11 @@ async function fetchMxePublicKey(provider: AnchorProvider): Promise<Uint8Array> 
 }
 
 // ---- the Arcium account set a queued computation needs (matches *.devnet.ts) ----------
-// `circuit` selects the comp-def: "breed" (start_breeding), "score_entry" (queue_score_entry)
+// `circuit` selects the comp-def: "breed" (start_breeding), "score_entry_v2" (queue_score_entry)
 // or "reveal_top3" (queue_reveal_top3) — the exact strings proven in tests/scoring.devnet.ts.
+// NOTE the "_v2": the scoring circuit was renamed when the synergy-multiplier formula shipped,
+// because its comp def had to be re-registered at a fresh offset (the old one cannot be closed
+// while foreign expired computations occupy shared devnet cluster 456's execpool).
 function arciumAccountsFor(circuit: string, computationOffset: BN) {
   return {
     computationAccount: getComputationAccAddress(ARCIUM_CLUSTER_OFFSET, computationOffset),
@@ -1013,7 +1016,7 @@ export function useOperatorActions(): OperatorActions {
           round: acc.round,
           entry,
           flowerRecord: acc.flowerRecord,
-          ...arciumAccountsFor("score_entry", offset),
+          ...arciumAccountsFor("score_entry_v2", offset),
         })
         .transaction();
       return submit(tx);

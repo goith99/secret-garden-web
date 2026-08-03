@@ -2202,7 +2202,7 @@ export type SecretGarden = {
       ]
     },
     {
-      "name": "scoreEntryCallback",
+      "name": "scoreEntryV2Callback",
       "docs": [
         "On success: persists the entry's encrypted score, marks it `scored`, and bumps",
         "`round.scored_count` (saturating). Idempotent via `entry.scored` — a retried or",
@@ -2212,14 +2212,14 @@ export type SecretGarden = {
         "false` so the entry can be re-queued."
       ],
       "discriminator": [
-        86,
-        175,
-        193,
-        162,
-        133,
-        157,
-        104,
-        119
+        6,
+        35,
+        139,
+        242,
+        77,
+        136,
+        130,
+        77
       ],
       "accounts": [
         {
@@ -2262,7 +2262,7 @@ export type SecretGarden = {
                   "kind": "type",
                   "type": {
                     "defined": {
-                      "name": "scoreEntryOutput"
+                      "name": "scoreEntryV2Output"
                     }
                   }
                 }
@@ -3380,6 +3380,26 @@ export type SecretGarden = {
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "currentEpochTotalRewards",
+            "type": "u64"
+          },
+          {
+            "name": "rewardsEpoch",
+            "type": {
+              "defined": {
+                "name": "epoch"
+              }
+            }
+          },
+          {
+            "name": "leaderSelector",
+            "type": {
+              "defined": {
+                "name": "leaderSelector"
+              }
+            }
           }
         ]
       }
@@ -4183,6 +4203,86 @@ export type SecretGarden = {
       }
     },
     {
+      "name": "leaderChoice",
+      "docs": [
+        "The computation chosen by a node to be executed when the node is leader."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "offset",
+            "type": "u64"
+          },
+          {
+            "name": "slotIdx",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "leaderInfo",
+      "docs": [
+        "The information about a node."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "stake",
+            "type": "u64"
+          },
+          {
+            "name": "count",
+            "type": "u64"
+          },
+          {
+            "name": "lastCounterPlusOne",
+            "type": "u64"
+          },
+          {
+            "name": "choice",
+            "type": {
+              "defined": {
+                "name": "leaderChoice"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "leaderSelector",
+      "docs": [
+        "To select a Leader.",
+        "Uses the greatest divisors method: https://en.wikipedia.org/wiki/D%27Hondt_method"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "stakingEpoch",
+            "type": {
+              "defined": {
+                "name": "epoch"
+              }
+            }
+          },
+          {
+            "name": "info",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "leaderInfo"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
       "name": "localCircuitSource",
       "type": {
         "kind": "enum",
@@ -4272,6 +4372,18 @@ export type SecretGarden = {
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "currentEpochRecoveryRewards",
+            "type": "u64"
+          },
+          {
+            "name": "recoveryRewardsEpoch",
+            "type": {
+              "defined": {
+                "name": "epoch"
+              }
+            }
           }
         ]
       }
@@ -4365,9 +4477,7 @@ export type SecretGarden = {
       "name": "nodeRef",
       "docs": [
         "A reference to a node in the cluster.",
-        "The offset is to derive the Node Account.",
-        "The current_total_rewards is the total rewards the node has received so far in the current",
-        "epoch."
+        "The offset is to derive the Node Account."
       ],
       "type": {
         "kind": "struct",
@@ -4377,8 +4487,13 @@ export type SecretGarden = {
             "type": "u32"
           },
           {
-            "name": "currentTotalRewards",
-            "type": "u64"
+            "name": "padding",
+            "type": {
+              "array": [
+                "u8",
+                8
+              ]
+            }
           },
           {
             "name": "vote",
@@ -4770,7 +4885,7 @@ export type SecretGarden = {
       }
     },
     {
-      "name": "scoreEntryOutput",
+      "name": "scoreEntryV2Output",
       "docs": [
         "The output of the callback instruction. Provided as a struct with ordered fields",
         "as anchor does not support tuples and tuple structs yet."
