@@ -21,8 +21,9 @@
  * env_pubkey + env_nonce + three 32-byte ciphertexts (light/water/soil). So the client must
  * perform the x25519 key-exchange + RescueCipher encryption against the live MXE public key,
  * exactly as tests/breeding.devnet.ts does. (This is the proven working path; the plaintext
- * route is not expressible against this IDL.) The selector indices 0..2 are the values
- * encrypted; the circuit interprets them server-side.
+ * route is not expressible against this IDL.) The UI selector indices (0..2) are mapped through
+ * `DIAL_TO_BIAS` onto the 0..=255 bias scale the circuit expects BEFORE encryption — sending the
+ * raw indices made the dials inert (see the comment at the encryption site).
  *
  * KEY LIFETIME (private_hint): breeding and hinting use the same x25519 + RescueCipher
  * primitives but with opposite key lifetimes. A breed result is PUBLIC, so its ephemeral key
@@ -71,10 +72,94 @@ import type { Environment, Flower } from "../types";
 // from env (getArciumEnv() is node-only); see tests/breeding.devnet.ts header (cluster 456).
 const ARCIUM_CLUSTER_OFFSET = 456;
 
+/**
+ * Environment dial position (0..2, the index into the UI option list) -> the 0..=255 bias scale
+ * the `breed` circuit expects. 128 is the circuit's documented neutral (it hard-codes 128 for
+ * genes with no environmental affinity), so the middle dial position is exactly neutral and the
+ * outer positions swing the full documented range: `bias / 4` yields +0 / +32 / +63.
+ */
+const DIAL_TO_BIAS = [0, 128, 255] as const;
+
 const EXPERIMENT_STATUS_QUEUED = 0;
 const EXPERIMENT_STATUS_COMPLETED = 2;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ---- starter-claim funding pre-flight -------------------------------------------------
+//
+// First-time setup is TWO signed transactions that between them rent-exempt SEVEN accounts:
+// one PlayerProfile (create_profile) and six FlowerRecords (claim_starters). A wallet that
+// cannot cover all of it used to find out only AFTER signing — commonly after signing the
+// FIRST transaction, which left the profile created and the starters unclaimed, i.e. exactly
+// the half-set-up state the claim screen has to recover from. Devnet faucet grants are
+// routinely smaller than the total, so this is not a rare edge.
+
+/** Where players are told to top up. Same faucet the docs page and README already name. */
+export const DEVNET_FAUCET_URL = "https://faucet.solana.com";
+
+/** Base fee per signature, in lamports. Measured against devnet (getFeeForMessage) — the
+ *  app sets no compute-unit price, so there is no priority fee on top. */
+const LAMPORTS_PER_SIGNATURE = 5_000;
+
+/** FlowerRecords `claim_starters` rent-exempts. Fixed by the instruction itself, which takes
+ *  exactly six flower accounts (flower0..flower5) — not read from GameConfig.starter_count. */
+const STARTER_FLOWER_COUNT = 6;
+
+/**
+ * Head-room added to the computed minimum, in lamports (0.002 SOL).
+ *
+ * The rent figures are exact and the base fee is fixed, so this is NOT covering the arithmetic
+ * — it is covering the gap between "can pay" and "can pay and still act". Without it a wallet
+ * funded to the exact lamport would pass the check, complete setup, and land on a balance of
+ * zero, unable to afford the very next signature (a breed, a submit) and with no rent left to
+ * reclaim. It also absorbs a fee-schedule change between this check and the second signature.
+ */
+const FUNDING_MARGIN_LAMPORTS = 2_000_000;
+
+/** What first-time setup costs, and whether the connected wallet can cover it. */
+export interface StarterFunds {
+  /** Rent + fees + margin, in lamports — the number the player must have. */
+  requiredLamports: number;
+  /** The wallet's balance at the moment of the check. */
+  balanceLamports: number;
+  /** False when the wallet cannot cover `requiredLamports`. */
+  sufficient: boolean;
+  /** True when the profile already exists, so only claim_starters is left to pay for. */
+  claimOnly: boolean;
+}
+
+const solStr = (lamports: number): string =>
+  (lamports / 1_000_000_000).toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+
+/** The player-facing sentence for a wallet that cannot cover setup. Exact amounts, both sides. */
+export function insufficientStarterFundsMessage(funds: StarterFunds): string {
+  return (
+    `You need at least ${solStr(funds.requiredLamports)} SOL to start your garden — ` +
+    `you currently have ${solStr(funds.balanceLamports)} SOL. ` +
+    `Get free devnet SOL from ${DEVNET_FAUCET_URL.replace("https://", "")} and try again.`
+  );
+}
+
+/**
+ * Rent-exemption minimum for one account of each kind, memoised for the lifetime of the tab.
+ * Sizes come from the IDL (`program.account.X.size`, verified equal to the live on-chain
+ * lengths: PlayerProfile 73 B, FlowerRecord 528 B) rather than being hard-coded, so a layout
+ * change flows through without anyone remembering to update a constant here.
+ */
+let rentCache: { profile: number; flower: number } | null = null;
+
+async function rentMinimums(
+  program: SecretGardenProgram,
+  connection: Connection,
+): Promise<{ profile: number; flower: number }> {
+  if (rentCache) return rentCache;
+  const [profile, flower] = await Promise.all([
+    connection.getMinimumBalanceForRentExemption(program.account.playerProfile.size),
+    connection.getMinimumBalanceForRentExemption(program.account.flowerRecord.size),
+  ]);
+  rentCache = { profile, flower };
+  return rentCache;
+}
 
 /** Crypto-strong random bytes in the browser (no node `crypto`). */
 function randomBytes(n: number): Uint8Array {
@@ -99,17 +184,65 @@ export class TxError extends Error {
   }
 }
 
+/**
+ * Every string a wallet error might hide its real reason in, lowercased and joined.
+ *
+ * Classifying on `e.message` alone misses the reason entirely for three real shapes:
+ *
+ *  - wallet-adapter wraps EVERY send failure in WalletSendTransactionError, but some wallets
+ *    hand it an empty message and leave the real error on the wrapped `.error` cause;
+ *  - web3.js's SendTransactionError keeps the useful text in `transactionMessage` /
+ *    `transactionLogs`, NOT in `message` (see its constructor: message is just
+ *    "Simulation failed. \nMessage: …");
+ *  - either of those can sit on the wrapper or on the cause.
+ *
+ * So collect from all of them. This is what lets an insufficient-funds failure be told apart
+ * from a genuine chain mismatch when both arrive with an empty top-level message.
+ */
+function errorHaystack(e: unknown): string {
+  const parts: string[] = [];
+  const push = (v: unknown) => {
+    if (typeof v === "string" && v.length > 0) parts.push(v);
+  };
+
+  if (e instanceof Error) push(e.message);
+  else if (e != null) push(String(e));
+
+  // WalletError keeps the wrapped cause on `.error`.
+  const cause = (e as { error?: unknown })?.error;
+  if (cause instanceof Error) push(cause.message);
+  else push(cause);
+
+  // SendTransactionError fields, on the wrapper or on the cause.
+  for (const src of [e, cause] as Array<
+    { transactionMessage?: unknown; transactionLogs?: unknown } | null | undefined
+  >) {
+    push(src?.transactionMessage);
+    if (Array.isArray(src?.transactionLogs)) push(src.transactionLogs.join("\n"));
+  }
+
+  return parts.join("\n").toLowerCase();
+}
+
 function classifyError(e: unknown): TxError {
   if (e instanceof TxError) return e;
   const msg = e instanceof Error ? e.message : String(e);
   const name = e instanceof Error ? e.name : "";
   const code = (e as { code?: number })?.code;
-  const lower = msg.toLowerCase();
+  // Match against the wrapper AND its cause, not just the top-level message.
+  const lower = errorHaystack(e);
+  // Prefer the top-level message for display/logging; fall back to the cause when it is empty
+  // so an unwrapped-only reason is not reported as a blank error.
+  const detail = msg || (e as { error?: { message?: string } })?.error?.message || "";
 
-  // ORDER MATTERS. Wrong-network signals are checked BEFORE the rejection signals below,
-  // because a wallet reports both through the same error class and the rejection test is the
-  // broader one — running it first swallowed genuine network failures as "the user cancelled",
-  // which left the network guard unarmed and the player looking at "Setup cancelled" forever.
+  // ORDER MATTERS, and the order is: bare-chain-mismatch -> insufficient -> network -> rejected.
+  //
+  // The rejection test is by far the broadest: it matches on the error NAME, and wallet-adapter
+  // wraps EVERY send failure in WalletSendTransactionError. Run it first and it swallows
+  // everything as "the user cancelled" — which it did, for both wrong-network (fixed earlier)
+  // and insufficient-funds (fixed here). Anything that classifies on message CONTENT has to be
+  // tested before it. Insufficient goes ahead of network because the empty-top-level-message
+  // variant is otherwise indistinguishable from a chain mismatch until the cause is unwrapped.
 
   // The standard wallet adapter throws a BARE WalletSendTransactionError — no message, no
   // wrapped cause — from exactly one place: the pre-send check that the connected account
@@ -117,8 +250,26 @@ function classifyError(e: unknown): TxError {
   // adapter.ts, `if (!account.chains.includes(chain)) throw new WalletSendTransactionError()`).
   // That IS the wallet telling us it is not on devnet. Its message-carrying sibling wraps a
   // real underlying send error and is handled further down.
-  if (name === "WalletSendTransactionError" && !msg) {
+  // `!lower` (not `!msg`) is the guard that matters: the bare chain-mismatch error carries NO
+  // cause at all, so its haystack is empty. A send failure that merely LOOKS bare — empty
+  // top-level message, real reason on the wrapped cause — has a non-empty haystack and must
+  // fall through to the checks below, or it gets mis-reported as "switch to devnet" when the
+  // player is actually just out of SOL.
+  if (name === "WalletSendTransactionError" && !msg && !lower) {
     return new TxError("network", "Make sure your wallet is set to Devnet and try again.");
+  }
+  // Not enough SOL to pay fees / rent for the new accounts. MUST be tested before the
+  // rejection branch below: that branch matches on the error NAME alone, and wallet-adapter
+  // wraps every send failure in WalletSendTransactionError — so it used to swallow every
+  // insufficient-funds failure as "the user cancelled", leaving this branch unreachable on
+  // the player path. First-time setup needs ~0.0288 SOL (profile + six starter FlowerRecords),
+  // so this is the single most likely genuine failure for a new wallet.
+  if (
+    lower.includes("insufficient") ||
+    lower.includes("debit an account but found no record of a prior credit") ||
+    lower.includes("attempt to debit")
+  ) {
+    return new TxError("insufficient", detail);
   }
   // Wrong network: a devnet tx submitted to another cluster (common with wallets the dApp
   // can't pin to devnet, e.g. Phantom) can't find the devnet blockhash or the program account.
@@ -146,17 +297,9 @@ function classifyError(e: unknown): TxError {
     lower.includes("cancelled") ||
     lower.includes("canceled")
   ) {
-    return new TxError("rejected", msg);
+    return new TxError("rejected", detail);
   }
-  // Not enough SOL to pay fees / rent for the new accounts.
-  if (
-    lower.includes("insufficient") ||
-    lower.includes("debit an account but found no record of a prior credit") ||
-    lower.includes("attempt to debit")
-  ) {
-    return new TxError("insufficient", msg);
-  }
-  return new TxError("failed", msg);
+  return new TxError("failed", detail);
 }
 
 // ---- send + confirm over HTTP (wallet sign-AND-send) ---------------------------------
@@ -300,8 +443,15 @@ export interface GardenActions {
   /** True once a wallet + program are connected and transactions can be sent. */
   ready: boolean;
   /**
+   * What first-time setup will cost and whether this wallet can cover it. Reads live rent
+   * minimums and the wallet's CURRENT balance every call — never cached across calls — so a
+   * player who tops up and presses retry is re-measured rather than judged on a stale result.
+   */
+  checkStarterFunds: () => Promise<StarterFunds>;
+  /**
    * Create the PlayerProfile PDA (step 1 of first-time setup). Idempotent: resolves immediately
    * if the profile already exists, so a retry after a partial setup only does what's left.
+   * Refuses to build a transaction at all when the wallet cannot fund the whole of setup.
    */
   createProfile: () => Promise<void>;
   claimStarters: () => Promise<string>;
@@ -384,6 +534,49 @@ export function useGardenActions(): GardenActions {
     return submit(tx);
   }, [program, publicKey, submit]);
 
+  /**
+   * Pre-flight: can this wallet actually pay for setup? Costed from live rent minimums for
+   * the exact account sizes, plus one base fee per signature, plus a margin.
+   *
+   * The requirement depends on what is left to do. A brand-new wallet pays for the profile AND
+   * six flowers across two signatures; a wallet that already got past step 1 pays only for the
+   * six flowers and one signature, so it is not held to a number it no longer owes.
+   *
+   * Deliberately re-reads the balance on every call. The retry path exists precisely so a
+   * player can top up and try again — caching this would tell them they are still broke.
+   */
+  const checkStarterFunds = useCallback(async (): Promise<StarterFunds> => {
+    if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
+    const profileExists =
+      (await program.account.playerProfile.fetchNullable(profilePda(publicKey))) !== null;
+    const rent = await rentMinimums(program, connection);
+    const signatures = profileExists ? 1 : 2;
+    const requiredLamports =
+      (profileExists ? 0 : rent.profile) +
+      STARTER_FLOWER_COUNT * rent.flower +
+      signatures * LAMPORTS_PER_SIGNATURE +
+      FUNDING_MARGIN_LAMPORTS;
+    const balanceLamports = await connection.getBalance(publicKey);
+    return {
+      requiredLamports,
+      balanceLamports,
+      sufficient: balanceLamports >= requiredLamports,
+      claimOnly: profileExists,
+    };
+  }, [program, publicKey, connection]);
+
+  /**
+   * Throws before anything is built or signed when the wallet cannot fund setup. Both signing
+   * entry points call this, so the guard cannot be skipped by whichever one the UI reaches
+   * first — the whole point is that no popup opens on a wallet that will fail partway.
+   */
+  const requireStarterFunds = useCallback(async (): Promise<void> => {
+    const funds = await checkStarterFunds();
+    if (!funds.sufficient) {
+      throw new TxError("insufficient", insufficientStarterFundsMessage(funds));
+    }
+  }, [checkStarterFunds]);
+
   // Step 1 of first-time setup: create the PlayerProfile PDA. Idempotent — if it already
   // exists (e.g. the player got past step 1 but cancelled the claim), this resolves without a
   // transaction so a retry only does the claim. Exposed so the UI can show a 2-step progress.
@@ -393,17 +586,25 @@ export function useGardenActions(): GardenActions {
     const profile = profilePda(owner);
     const existing = await program.account.playerProfile.fetchNullable(profile);
     if (existing) return; // already set up — nothing to sign
+    // Gate on the FULL cost, not just this transaction's. Affording create_profile but not
+    // claim_starters is the trap: it succeeds, takes the rent, and strands the wallet
+    // half-set-up with less SOL than before.
+    await requireStarterFunds();
     const tx = await program.methods
       .createProfile()
       .accountsPartial({ owner, config: configPda(), profile })
       .transaction();
     await submit(tx);
-  }, [program, publicKey, submit]);
+  }, [program, publicKey, submit, requireStarterFunds]);
 
   const claimStarters = useCallback(async (): Promise<string> => {
     if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
     const owner = publicKey;
     const profile = profilePda(owner);
+
+    // Same gate as createProfile. Reached on its own on the claim-only retry path, where the
+    // profile already exists and the requirement drops to six flowers plus one signature.
+    await requireStarterFunds();
 
     // claim_starters takes `profile` as `mut` (NOT `init`) — the program requires the
     // PlayerProfile PDA to already exist. A brand-new wallet has none, so create it first in
@@ -434,7 +635,7 @@ export function useGardenActions(): GardenActions {
       })
       .transaction();
     return submit(tx);
-  }, [program, publicKey, submit]);
+  }, [program, publicKey, submit, requireStarterFunds]);
 
   const startBreeding = useCallback(
     async ({
@@ -458,8 +659,19 @@ export function useGardenActions(): GardenActions {
       const cipher = new RescueCipher(x25519.getSharedSecret(privKey, mxePublicKey));
 
       const nonce = randomBytes(16);
+      // The circuit's `pick()` takes an environment bias on a 0..=255 scale (it computes
+      // `bias / 4`, giving 0..=63, and passes a literal 128 for genes with no environmental
+      // affinity). `Environment.light/water/soil` are UI option INDICES (0..2), so sending them
+      // raw made `bias / 4` truncate to 0 for every dial position — the dials had literally no
+      // effect on inheritance, while the non-environmental genes got the +32 from that 128.
+      // Map each dial position onto the scale the circuit documents. The repo's own tests
+      // already send 0..255 values (e.g. [40, 120, 200]); only this client was out of contract.
       const ct = cipher.encrypt(
-        [BigInt(environment.light), BigInt(environment.water), BigInt(environment.soil)],
+        [
+          BigInt(DIAL_TO_BIAS[environment.light] ?? 128),
+          BigInt(DIAL_TO_BIAS[environment.water] ?? 128),
+          BigInt(DIAL_TO_BIAS[environment.soil] ?? 128),
+        ],
         nonce,
       );
 
@@ -660,6 +872,7 @@ export function useGardenActions(): GardenActions {
   return useMemo(
     () => ({
       ready,
+      checkStarterFunds,
       createProfile,
       claimStarters,
       startBreeding,
@@ -672,7 +885,7 @@ export function useGardenActions(): GardenActions {
       fetchHintResult,
       decryptHint,
     }),
-    [ready, createProfile, claimStarters, startBreeding, submitEntry, migrateProfile, pollBreeding, fetchFlowerRecord, closeFlower, queuePrivateHint, fetchHintResult, decryptHint],
+    [ready, checkStarterFunds, createProfile, claimStarters, startBreeding, submitEntry, migrateProfile, pollBreeding, fetchFlowerRecord, closeFlower, queuePrivateHint, fetchHintResult, decryptHint],
   );
 }
 

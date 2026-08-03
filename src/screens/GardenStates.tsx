@@ -6,7 +6,11 @@
 import { useState, type ReactNode } from "react";
 import { PlayerButton } from "../components/PlayerButton";
 import { useToast } from "../components/Toast";
-import { useGardenActions, TxError } from "../program/transactions";
+import {
+  useGardenActions,
+  TxError,
+  insufficientStarterFundsMessage,
+} from "../program/transactions";
 
 function Centered({ children }: { children: ReactNode }) {
   return (
@@ -52,7 +56,7 @@ export function GardenEmpty({
   onRefresh: () => void;
   profileExists?: boolean;
 }) {
-  const { createProfile, claimStarters, ready } = useGardenActions();
+  const { createProfile, claimStarters, checkStarterFunds, ready } = useGardenActions();
   const toast = useToast();
   const [busy, setBusy] = useState<"idle" | "creating" | "claiming">("idle");
   // Step 1 done DURING this mount. Combined with the on-chain `profileExists` below rather
@@ -71,6 +75,19 @@ export function GardenEmpty({
     // Track the step in a local — state updates aren't visible to this closure after an await.
     let step: "create" | "claim" = claimOnly ? "claim" : "create";
     try {
+      // PRE-FLIGHT. Setup rent-exempts seven accounts across two signatures; a wallet that
+      // can't cover all of it used to discover that only after signing — often after the
+      // FIRST signature, which spends the profile rent and strands them half-set-up with
+      // less SOL than they started with. Costed from live rent minimums, and re-read on
+      // every click so a player who tops up and retries is measured again, not remembered.
+      setBusy(claimOnly ? "claiming" : "creating");
+      const funds = await checkStarterFunds();
+      if (!funds.sufficient) {
+        // Exact amounts, both sides, and where to get more. No transaction is built.
+        setProblem(insufficientStarterFundsMessage(funds));
+        return;
+      }
+
       if (!claimOnly) {
         setBusy("creating");
         await createProfile();
