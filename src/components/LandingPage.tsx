@@ -427,7 +427,7 @@ export function LandingPage() {
               GitHub
             </a>
             <a
-              href="https://x.com/0x_goith"
+              href="https://x.com/garden_protocol"
               target="_blank"
               rel="noopener noreferrer"
               className="transition hover:text-garden-mint"

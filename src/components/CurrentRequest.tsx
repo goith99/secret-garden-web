@@ -1,6 +1,7 @@
 import { useGame } from "../game/GameContext";
 import { Badge } from "./Badge";
 import { roundStatusLabel, traitName } from "../lib/presentation";
+import { useRoundMetadata } from "../hooks/useRoundMetadata";
 
 function hoursLeft(endTime: number): string {
   const secs = endTime - Math.floor(Date.now() / 1000);
@@ -13,6 +14,7 @@ function hoursLeft(endTime: number): string {
 /** "Current Request" — the active challenge's target traits the player breeds toward. */
 export function CurrentRequest() {
   const { challenge } = useGame();
+  const { name: roundName } = useRoundMetadata(challenge.roundId);
   const traits = challenge.targetTraits.slice(0, challenge.targetTraitCount);
 
   return (
@@ -32,9 +34,14 @@ export function CurrentRequest() {
         ))}
       </div>
       <div className="mt-2.5 flex items-center justify-between font-pixel text-[10px] uppercase tracking-wide text-garden-cyan/80">
-        <span>Round {challenge.roundId}</span>
-        <span>{challenge.participantCount} entrants</span>
-        <span>{hoursLeft(challenge.endTime)}</span>
+        {/* The operator's optional round name rides along with the number; it truncates rather
+            than pushing the entrant count and countdown out of the row. */}
+        <span className="min-w-0 truncate" title={roundName || undefined}>
+          Round {challenge.roundId}
+          {roundName && <span className="text-garden-gold/90"> · {roundName}</span>}
+        </span>
+        <span className="shrink-0">{challenge.participantCount} entrants</span>
+        <span className="shrink-0">{hoursLeft(challenge.endTime)}</span>
       </div>
     </div>
   );

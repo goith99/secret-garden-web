@@ -910,13 +910,22 @@ export interface OperatorEntry {
   scored: boolean;
 }
 
+/** What open_round produced: its signature plus the round number it actually opened. */
+export interface OpenedRound {
+  signature: string;
+  /** currentRound + 1, derived from the live config read — NOT from the UI's copy. */
+  roundId: number;
+}
+
 export interface OperatorActions {
   /** True once a wallet + program are connected and operator transactions can be sent. */
   ready: boolean;
   /** open_round — opens round (currentRound + 1). Reads the live config for the counter. */
-  openRound: () => Promise<string>;
+  openRound: () => Promise<OpenedRound>;
   /** close_round — stops new entries on the given round. */
   closeRound: (roundId: number) => Promise<string>;
+  /** finalize_round — Closed -> Finalized, which is what lets the NEXT round open. */
+  finalizeRound: (roundId: number) => Promise<string>;
   /** queue_score_entry for ONE entry (separate wallet approval each). */
   queueScoreEntry: (entryPubkey: string) => Promise<string>;
   /** queue_reveal_top3 for the round, passing every entry as a remaining account. */
@@ -926,7 +935,7 @@ export interface OperatorActions {
 }
 
 /**
- * Hook exposing the four authority-only instructions plus the entry read the score/reveal
+ * Hook exposing the five authority-only instructions plus the entry read the score/reveal
  * flow needs. All web3/anchor/arcium handling stays inside this module, exactly like the
  * player surface above. UI must only render this when the wallet equals GameConfig.authority.
  */
@@ -973,7 +982,7 @@ export function useOperatorActions(): OperatorActions {
     [program],
   );
 
-  const openRound = useCallback(async (): Promise<string> => {
+  const openRound = useCallback(async (): Promise<OpenedRound> => {
     if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
     // Read the live config counter (never the possibly-stale UI copy) to derive the PDAs.
     const config = await program.account.gameConfig.fetch(configPda());
@@ -987,7 +996,9 @@ export function useOperatorActions(): OperatorActions {
         round: roundPda(current + 1),
       })
       .transaction();
-    return submit(tx);
+    // The caller needs the new number to key off-chain round metadata; hand back the one the
+    // PDAs were derived from so the two can never disagree.
+    return { signature: await submit(tx), roundId: current + 1 };
   }, [program, publicKey, submit]);
 
   const closeRound = useCallback(
@@ -995,6 +1006,28 @@ export function useOperatorActions(): OperatorActions {
       if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
       const tx = await program.methods
         .closeRound()
+        .accountsPartial({ authority: publicKey, round: roundPda(roundId) })
+        .transaction();
+      return submit(tx);
+    },
+    [program, publicKey, submit],
+  );
+
+  /**
+   * Closed -> Finalized. open_round refuses to run while the previous round is still Closed,
+   * so without this every round dead-ends and the game cannot advance.
+   *
+   * ONE-WAY. There is no un-finalize instruction, and both queue_score_entry and
+   * queue_reveal_top3 require status == Closed — so finalizing a round that still has
+   * unscored entries or an unrevealed top 3 forfeits them permanently. The chain itself only
+   * checks `status == Closed` (finalize_round.rs); the ordering guard lives in the UI, see
+   * OperatorPanel's `canFinalize`.
+   */
+  const finalizeRound = useCallback(
+    async (roundId: number): Promise<string> => {
+      if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
+      const tx = await program.methods
+        .finalizeRound()
         .accountsPartial({ authority: publicKey, round: roundPda(roundId) })
         .transaction();
       return submit(tx);
@@ -1057,10 +1090,19 @@ export function useOperatorActions(): OperatorActions {
       ready,
       openRound,
       closeRound,
+      finalizeRound,
       queueScoreEntry,
       queueRevealTop3,
       fetchRoundEntries,
     }),
-    [ready, openRound, closeRound, queueScoreEntry, queueRevealTop3, fetchRoundEntries],
+    [
+      ready,
+      openRound,
+      closeRound,
+      finalizeRound,
+      queueScoreEntry,
+      queueRevealTop3,
+      fetchRoundEntries,
+    ],
   );
 }

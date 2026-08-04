@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useGame } from "../game/GameContext";
 import { useGardener } from "../wallet/useGardener";
 import { useConnectWallet } from "../wallet/ConnectWalletContext";
@@ -19,7 +20,8 @@ export function AppHeader({ compact = false }: { compact?: boolean }) {
 
   return (
     <header className="flex shrink-0 items-center justify-between gap-2 border-b border-garden-moss/60 px-3 py-2">
-      <div className="flex items-center gap-2">
+      {/* Brand mark + wordmark double as the way back to the landing page. */}
+      <Link to="/" className="flex items-center gap-2" aria-label="Secret Garden home">
         {/* 5-petal flower mark — matches public/favicon.svg and the LandingPage hero flower.
             No backdrop tile here: the header already sits on the dark botanical background. */}
         <svg className="h-5 w-5" viewBox="0 0 32 32" fill="none" aria-hidden>
@@ -40,7 +42,7 @@ export function AppHeader({ compact = false }: { compact?: boolean }) {
             </p>
           )}
         </div>
-      </div>
+      </Link>
       <div className="flex items-center gap-2">
         <Badge className="border-garden-gold/70 bg-garden-gold/10 text-garden-gold">
           {roundStatusLabel(challenge.status)}

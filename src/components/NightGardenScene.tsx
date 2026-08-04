@@ -11,10 +11,16 @@
  *   5. grass blades            — short dark-green blades along the very bottom edge
  *   6. ground fog              — a faint blurred teal strip hugging the ground
  *   7. fireflies               — a few glowing yellow-green motes wandering slowly
+ *   8. lanterns                — event theme only: warm hanging orbs in the upper sky
+ *
+ * The `theme` prop only ever restyles layers 1-3 and adds 8; the structure, the ground half
+ * of the gradient, and every foreground layer stay identical, so anything rendered on top
+ * keeps the same dark backdrop to sit on.
  *
  * All motion is CSS-keyframe based and is neutralised by the global prefers-reduced-motion
  * rule in index.css.
  */
+import { DEFAULT_BACKGROUND, type GardenBackground } from "../hooks/useRoundMetadata";
 
 const STARS = [
   { left: "8%", top: "10%", size: 2, dur: "3.2s", delay: "0s" },
@@ -28,6 +34,47 @@ const STARS = [
   { left: "91%", top: "13%", size: 2, dur: "4.2s", delay: "0.2s" },
   { left: "46%", top: "27%", size: 2, dur: "3.4s", delay: "2.6s" },
   { left: "14%", top: "31%", size: 2, dur: "3.7s", delay: "0.7s" },
+];
+
+/**
+ * Per-theme palette. "event" is the festival dressing: the sky's UPPER half warms to a deep
+ * plum, the stars and moon halo turn gold, and lanterns light up — while the lower half of
+ * the gradient, and therefore everything the player actually reads or drags against, stays
+ * the same near-black garden green. Both skies top out around 4% relative luminance, so
+ * cream/mint/gold foreground text keeps its contrast either way.
+ */
+interface SceneTheme {
+  sky: string;
+  star: string;
+  moon: string;
+  moonGlow: string;
+  lanterns: boolean;
+}
+
+const THEMES: Record<GardenBackground, SceneTheme> = {
+  classic: {
+    sky: "linear-gradient(180deg, #0a1628 0%, #0d2818 42%, #0d3318 66%, #0a2510 100%)",
+    star: "#f5efda",
+    moon: "#f5f0e0",
+    moonGlow: "0 0 22px 6px rgba(245,240,224,0.22), 0 0 60px 18px rgba(230,194,92,0.10)",
+    lanterns: false,
+  },
+  event: {
+    sky: "linear-gradient(180deg, #1c0f2e 0%, #241436 30%, #0f2f1c 66%, #0a2510 100%)",
+    star: "#f2dfa8",
+    moon: "#f7ecd2",
+    moonGlow: "0 0 26px 8px rgba(247,236,210,0.28), 0 0 72px 26px rgba(230,194,92,0.20)",
+    lanterns: true,
+  },
+};
+
+// Festival lanterns — warm orbs strung across the upper sky, breathing on the gentle
+// pulseSoft loop rather than the sharper star twinkle.
+const LANTERNS = [
+  { left: "13%", top: "15%", size: 7, dur: "4.6s", delay: "0.4s" },
+  { left: "34%", top: "9%", size: 6, dur: "5.4s", delay: "1.6s" },
+  { left: "67%", top: "13%", size: 6, dur: "5.0s", delay: "0.9s" },
+  { left: "88%", top: "29%", size: 7, dur: "4.2s", delay: "2.1s" },
 ];
 
 const FIREFLIES = [
@@ -64,28 +111,30 @@ function Bush({ side }: { side: "left" | "right" }) {
   );
 }
 
-export function NightGardenScene() {
+export function NightGardenScene({
+  theme = DEFAULT_BACKGROUND,
+}: {
+  /** Which round background to paint. Unknown values are resolved upstream, in useRoundMetadata. */
+  theme?: GardenBackground;
+}) {
+  const t = THEMES[theme];
+
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
       {/* 1 — sky fading down into dark garden ground */}
-      <div
-        className="absolute inset-0"
-        style={{
-          background:
-            "linear-gradient(180deg, #0a1628 0%, #0d2818 42%, #0d3318 66%, #0a2510 100%)",
-        }}
-      />
+      <div className="absolute inset-0" style={{ background: t.sky }} />
 
       {/* 2 — twinkling stars (upper sky only) */}
       {STARS.map((s, i) => (
         <span
           key={i}
-          className="animate-twinkle absolute rounded-full bg-garden-cream"
+          className="animate-twinkle absolute rounded-full"
           style={{
             left: s.left,
             top: s.top,
             width: s.size,
             height: s.size,
+            backgroundColor: t.star,
             animationDuration: s.dur,
             animationDelay: s.delay,
           }}
@@ -95,12 +144,27 @@ export function NightGardenScene() {
       {/* 3 — moon with a soft warm halo */}
       <div
         className="absolute right-6 top-4 h-9 w-9 rounded-full md:h-11 md:w-11"
-        style={{
-          background: "#f5f0e0",
-          boxShadow:
-            "0 0 22px 6px rgba(245,240,224,0.22), 0 0 60px 18px rgba(230,194,92,0.10)",
-        }}
+        style={{ background: t.moon, boxShadow: t.moonGlow }}
       />
+
+      {/* 8 — festival lanterns (event theme only) */}
+      {t.lanterns &&
+        LANTERNS.map((l, i) => (
+          <span
+            key={i}
+            className="animate-pulseSoft absolute rounded-full"
+            style={{
+              left: l.left,
+              top: l.top,
+              width: l.size,
+              height: l.size,
+              backgroundColor: "#f0cf7a",
+              boxShadow: "0 0 10px 3px rgba(230,194,92,0.45), 0 0 22px 8px rgba(230,194,92,0.18)",
+              animationDuration: l.dur,
+              animationDelay: l.delay,
+            }}
+          />
+        ))}
 
       {/* 4 — side bush silhouettes */}
       <Bush side="left" />

@@ -4,6 +4,7 @@ import { EnvironmentSelector } from "./EnvironmentSelector";
 import { NightGardenScene } from "./NightGardenScene";
 import { StarterGarden } from "./StarterGarden";
 import { useGame } from "../game/GameContext";
+import { useRoundMetadata } from "../hooks/useRoundMetadata";
 
 /**
  * The Greenhouse — the central play area, staged as a cozy night-garden scene:
@@ -18,7 +19,11 @@ import { useGame } from "../game/GameContext";
  * they never grow the column height.
  */
 export function Greenhouse() {
-  const { breedError, bloomToast, retryRefresh, breedsRemaining } = useGame();
+  const { breedError, bloomToast, retryRefresh, breedsRemaining, challenge } = useGame();
+
+  // Cosmetic backdrop the operator picked for this round. Defaults to the classic night
+  // garden until (or unless) Supabase says otherwise, so the scene never waits on a fetch.
+  const { background } = useRoundMetadata(challenge.roundId);
 
   // Informational only: stays quiet at a full cap (5), counts down as breeds are spent, and
   // turns to a gentle amber warning once they're gone. Player vocabulary — no on-chain terms.
@@ -31,7 +36,7 @@ export function Greenhouse() {
           keeps the scene readable, but flex-1 lets it shrink so the controls strip below
           always stays fully visible at 100% zoom (1366×768) — no scroll, no cut-off. */}
       <div className="relative min-h-[200px] flex-1 overflow-hidden rounded-xl border border-garden-moss/70 bg-garden-deep/40 shadow-panel">
-        <NightGardenScene />
+        <NightGardenScene theme={background} />
 
         {/* Foreground play layer: pots in a top band, starters in a bottom band. A flex column
             with justify-between keeps the two bands apart at ANY scene height, so filled /

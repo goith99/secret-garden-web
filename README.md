@@ -18,7 +18,9 @@ Built on Solana Devnet with Arcium MPC for private genome breeding.
 - Profile migration notice that guides you through `migrate_profile` when the
   on-chain profile schema changes
 - Toast notifications for transaction and breeding status
-- Operator panel for round management (visible only to the operator wallet)
+- Operator panel for round management (visible only to the operator wallet), with an
+  optional round name and garden background recorded off-chain per round — run
+  `supabase/round_metadata.sql` once to create the table it writes to
 
 ## Stack
 
