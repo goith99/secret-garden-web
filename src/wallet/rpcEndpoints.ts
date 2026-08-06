@@ -58,7 +58,8 @@ export const DEVNET_ENDPOINTS: readonly string[] = assertDevnetNamed([
   // CORS headers. Two known limits, accepted because this is only ever reached when the
   // primary is already failing: its free tier 429s under sustained use, and getProgramAccounts
   // is paid-only — which degrades ONLY the authority-gated operator panel
-  // (useOperatorActions.fetchRoundEntries / queueRevealTop3), never a player's own garden.
+  // (useOperatorActions.fetchRoundEntries and the bracket reveal, which reads a round's
+  // entries to plan its shards), never a player's own garden.
   "https://solana-devnet.gateway.tatum.io",
 ]);
 

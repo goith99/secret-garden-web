@@ -9,8 +9,8 @@
  *   queue_private_hint — ask which of the round's target traits one OWN flower satisfies.
  *   close_flower       — release one own Active hybrid, freeing a collection slot.
  *
- * Operator/authority instructions (open_round, queue_score_entry, reveal_top3, cancel*) are
- * deliberately NOT exposed here.
+ * Operator/authority instructions (open_round, queue_score_entry, the bracket reveal, cancel*)
+ * are deliberately NOT exposed here — see useOperatorActions at the bottom of this file.
  *
  * SENDING: every tx goes through the wallet adapter's `sendTransaction` (sign-AND-send), so
  * the wallet keeps the network it was connected on (devnet). We never call signTransaction
@@ -45,15 +45,15 @@ import {
   x25519,
   deserializeLE,
   getMXEPublicKey,
-  getMXEAccAddress,
-  getMempoolAccAddress,
-  getExecutingPoolAccAddress,
-  getClusterAccAddress,
-  getComputationAccAddress,
-  getCompDefAccAddress,
-  getCompDefAccOffset,
 } from "@arcium-hq/client";
 import { useProgram, type SecretGardenProgram } from "./client";
+import { arciumAccountsFor } from "./arcium";
+import {
+  inspectReveal,
+  runBracketReveal,
+  type ProgressFn,
+  type RevealStatus,
+} from "./reveal";
 import { useNetworkGuard } from "../wallet/useNetworkGuard";
 import {
   PROGRAM_ID,
@@ -67,10 +67,12 @@ import {
   fetchFlower,
 } from "./accounts";
 import type { Environment, Flower } from "../types";
+import { TxError, type TxErrorKind } from "./errors";
 
-// Arcium cluster the breed circuit is deployed + finalized on (devnet). Constant, not read
-// from env (getArciumEnv() is node-only); see tests/breeding.devnet.ts header (cluster 456).
-const ARCIUM_CLUSTER_OFFSET = 456;
+// Re-exported so the many components that already import TxError from this module keep
+// working; the class itself moved to ./errors so reveal.ts can throw it without a cycle.
+export { TxError };
+export type { TxErrorKind };
 
 /**
  * Environment dial position (0..2, the index into the UI option list) -> the 0..=255 bias scale
@@ -166,24 +168,7 @@ function randomBytes(n: number): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(n));
 }
 
-/** Read the first 4 little-endian bytes of a comp-def offset as a u32 (no Buffer). */
-function u32FromLE(bytes: Uint8Array): number {
-  return new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true);
-}
-
 // ---- player-vocabulary error classification ------------------------------------------
-export type TxErrorKind = "rejected" | "insufficient" | "failed" | "network";
-
-/** A transaction error already reduced to a player-facing category (never a raw RPC dump). */
-export class TxError extends Error {
-  readonly kind: TxErrorKind;
-  constructor(kind: TxErrorKind, message: string) {
-    super(message);
-    this.name = "TxError";
-    this.kind = kind;
-  }
-}
-
 /**
  * Every string a wallet error might hide its real reason in, lowercased and joined.
  *
@@ -384,23 +369,6 @@ async function fetchMxePublicKey(provider: AnchorProvider): Promise<Uint8Array> 
   }
   if (!mxePublicKey) throw new TxError("failed", "greenhouse not ready (no MXE key)");
   return mxePublicKey;
-}
-
-// ---- the Arcium account set a queued computation needs (matches *.devnet.ts) ----------
-// `circuit` selects the comp-def: "breed" (start_breeding), "score_entry_v2" (queue_score_entry)
-// or "reveal_top3" (queue_reveal_top3) — the exact strings proven in tests/scoring.devnet.ts.
-// NOTE the "_v2": the scoring circuit was renamed when the synergy-multiplier formula shipped,
-// because its comp def had to be re-registered at a fresh offset (the old one cannot be closed
-// while foreign expired computations occupy shared devnet cluster 456's execpool).
-function arciumAccountsFor(circuit: string, computationOffset: BN) {
-  return {
-    computationAccount: getComputationAccAddress(ARCIUM_CLUSTER_OFFSET, computationOffset),
-    clusterAccount: getClusterAccAddress(ARCIUM_CLUSTER_OFFSET),
-    mxeAccount: getMXEAccAddress(PROGRAM_ID),
-    mempoolAccount: getMempoolAccAddress(ARCIUM_CLUSTER_OFFSET),
-    executingPool: getExecutingPoolAccAddress(ARCIUM_CLUSTER_OFFSET),
-    compDefAccount: getCompDefAccAddress(PROGRAM_ID, u32FromLE(getCompDefAccOffset(circuit))),
-  };
 }
 
 export interface StartBreedingResult {
@@ -928,8 +896,20 @@ export interface OperatorActions {
   finalizeRound: (roundId: number) => Promise<string>;
   /** queue_score_entry for ONE entry (separate wallet approval each). */
   queueScoreEntry: (entryPubkey: string) => Promise<string>;
-  /** queue_reveal_top3 for the round, passing every entry as a remaining account. */
-  queueRevealTop3: (roundId: number) => Promise<string>;
+  /**
+   * Read-only: what revealing this round would involve, and how much of it the chain says is
+   * already done. Called when the panel opens so an interrupted sequence can be resumed.
+   */
+  inspectReveal: (roundId: number) => Promise<RevealStatus>;
+  /**
+   * Run the FULL bracket reveal for a round — partition, shard reveals, collection, promotion
+   * and semifinals for a large round, the final reveal, and apply_bracket_result — reporting
+   * each phase through `onProgress`. Resumes automatically from whatever is already on-chain.
+   *
+   * This replaces `queue_reveal_top3`, which Arcium rejects past 14 entries (error 6202) and
+   * which is no longer part of the operational flow.
+   */
+  revealWinners: (roundId: number, onProgress: ProgressFn) => Promise<void>;
   /** Fetch all CompetitionEntry accounts for a round (memcmp on the `round` field). */
   fetchRoundEntries: (roundId: number) => Promise<OperatorEntry[]>;
 }
@@ -1017,10 +997,11 @@ export function useOperatorActions(): OperatorActions {
    * Closed -> Finalized. open_round refuses to run while the previous round is still Closed,
    * so without this every round dead-ends and the game cannot advance.
    *
-   * ONE-WAY. There is no un-finalize instruction, and both queue_score_entry and
-   * queue_reveal_top3 require status == Closed — so finalizing a round that still has
-   * unscored entries or an unrevealed top 3 forfeits them permanently. The chain itself only
-   * checks `status == Closed` (finalize_round.rs); the ordering guard lives in the UI, see
+   * ONE-WAY. There is no un-finalize instruction, and queue_score_entry requires
+   * status == Closed — so finalizing a round that still has unscored entries forfeits their
+   * scores permanently. (The reveal itself survives: the bracket accepts a FINALIZED round
+   * so a fully-scored one can still be rescued.) The chain itself only checks
+   * `status == Closed` (finalize_round.rs); the ordering guard lives in the UI, see
    * OperatorPanel's `canFinalize`.
    */
   const finalizeRound = useCallback(
@@ -1057,32 +1038,23 @@ export function useOperatorActions(): OperatorActions {
     [program, publicKey, submit],
   );
 
-  const queueRevealTop3 = useCallback(
-    async (roundId: number): Promise<string> => {
-      if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
-      const round = roundPda(roundId);
-      const entries = await program.account.competitionEntry.all([
-        { memcmp: { offset: 8, bytes: round.toBase58() } },
-      ]);
-      const offset = new BN(Array.from(randomBytes(8)));
-      const tx = await program.methods
-        .queueRevealTop3(offset)
-        .accountsPartial({
-          authority: publicKey,
-          round,
-          ...arciumAccountsFor("reveal_top3", offset),
-        })
-        .remainingAccounts(
-          entries.map((e) => ({
-            pubkey: e.publicKey,
-            isWritable: false,
-            isSigner: false,
-          })),
-        )
-        .transaction();
-      return submit(tx);
-    },
-    [program, publicKey, submit],
+  // The bracket reveal is a multi-step sequence rather than one instruction, so it lives in
+  // its own module (./reveal). Both entry points below just bind it to the connected wallet
+  // and the same send-and-confirm choke point every other operator action uses.
+  const revealContext = useCallback(() => {
+    if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
+    return { program, authority: publicKey, submit };
+  }, [program, publicKey, submit]);
+
+  const inspectRoundReveal = useCallback(
+    (roundId: number): Promise<RevealStatus> => inspectReveal(revealContext(), roundId),
+    [revealContext],
+  );
+
+  const revealWinners = useCallback(
+    (roundId: number, onProgress: ProgressFn): Promise<void> =>
+      runBracketReveal(revealContext(), roundId, onProgress),
+    [revealContext],
   );
 
   return useMemo(
@@ -1092,7 +1064,8 @@ export function useOperatorActions(): OperatorActions {
       closeRound,
       finalizeRound,
       queueScoreEntry,
-      queueRevealTop3,
+      inspectReveal: inspectRoundReveal,
+      revealWinners,
       fetchRoundEntries,
     }),
     [
@@ -1101,7 +1074,8 @@ export function useOperatorActions(): OperatorActions {
       closeRound,
       finalizeRound,
       queueScoreEntry,
-      queueRevealTop3,
+      inspectRoundReveal,
+      revealWinners,
       fetchRoundEntries,
     ],
   );

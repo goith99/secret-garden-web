@@ -2,10 +2,14 @@
  * Hidden OPERATOR panel — internal authority tooling, NOT part of the player surface.
  *
  * It is mounted only by <AppHeader> when the connected wallet equals GameConfig.authority,
- * so this component assumes it is already authorized. It drives the five authority-only
- * instructions (close_round, queue_score_entry, queue_reveal_top3, finalize_round,
- * open_round) through useOperatorActions(), refetching the shared garden data after each so
- * the read-only status reflects the new chain state.
+ * so this component assumes it is already authorized. It drives the authority-only actions
+ * (close_round, queue_score_entry, the bracket reveal, finalize_round, open_round) through
+ * useOperatorActions(), refetching the shared garden data after each so the read-only status
+ * reflects the new chain state.
+ *
+ * "Reveal Winners" is no longer one instruction. It runs the whole bracket sequence — see
+ * src/program/reveal.ts — which is several signatures and several MPC calls, so it is the one
+ * action with its own progress readout and its own resume path.
  *
  * The actions are laid out in the order they must actually be run — Close, Score, Reveal,
  * Finalize, Open — because open_round refuses to run until the previous round is Finalized.
@@ -20,7 +24,9 @@ import {
   TxError,
   useOperatorActions,
   type OperatorEntry,
+  type OperatorActions,
 } from "../program/transactions";
+import type { RevealProgress, RevealStatus } from "../program/reveal";
 import {
   DEFAULT_BACKGROUND,
   GARDEN_BACKGROUNDS,
@@ -67,6 +73,7 @@ export function OperatorPanel({ onClose }: { onClose: () => void }) {
   const roundId = challenge.roundId;
   const isOpen = challenge.status === RoundStatus.Open && roundId > 0;
   const isClosed = challenge.status === RoundStatus.Closed;
+  const isFinalized = challenge.status === RoundStatus.Finalized && roundId > 0;
 
   const total = entries?.length ?? challenge.participantCount;
   const scoredN = entries
@@ -78,9 +85,14 @@ export function OperatorPanel({ onClose }: { onClose: () => void }) {
   const allScored = total > 0 && scoredN >= total;
 
   /**
-   * Finalize is ONE-WAY: there is no un-finalize instruction, and both queue_score_entry and
-   * queue_reveal_top3 require status == Closed. Finalizing a round that still has unscored
-   * entries or an unrevealed top 3 therefore destroys them for good.
+   * Finalize is ONE-WAY: there is no un-finalize instruction, and queue_score_entry requires
+   * status == Closed. Finalizing a round that still has unscored entries therefore forfeits
+   * their scores for good — and an entry that can never be scored can never be revealed.
+   *
+   * The REVEAL is no longer lost this way: init_bracket accepts a FINALIZED round precisely
+   * so a fully-scored round that was finalized too early can still be rescued (devnet round
+   * 11 was). The guard below stays strict anyway — "recoverable" is not "fine", and the
+   * operator should still reveal before finalizing.
    *
    * The chain is deliberately looser than this — finalize_round.rs checks only
    * `status == Closed`. We do NOT mirror that literally, because a mis-click would silently
@@ -186,20 +198,6 @@ export function OperatorPanel({ onClose }: { onClose: () => void }) {
     }
   }, [operator, afterAction, roundId]);
 
-  const onRevealWinners = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    setMessage(null);
-    try {
-      await operator.queueRevealTop3(roundId);
-      await afterAction("Winners revealed!");
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  }, [operator, afterAction, roundId]);
-
   const onFinalizeRound = useCallback(async () => {
     setBusy(true);
     setError(null);
@@ -280,12 +278,22 @@ export function OperatorPanel({ onClose }: { onClose: () => void }) {
               disabled={busy || !isClosed || total === 0 || allScored}
               onClick={onScoreEntries}
             />
-            <OperatorAction
-              title="Reveal Winners"
-              hint="Queues the top-3 reveal once every entry is scored."
-              buttonLabel="Reveal Winners"
-              disabled={busy || !isClosed || !allScored || challenge.scoringRevealed}
-              onClick={onRevealWinners}
+            <RevealWinnersAction
+              operator={operator}
+              roundId={roundId}
+              // Finalized-but-unrevealed is deliberately allowed: init_bracket accepts a
+              // FINALIZED round precisely so one that was finalized before its reveal is
+              // rescuable rather than stuck with its winners lost.
+              eligible={(isClosed || isFinalized) && allScored && !challenge.scoringRevealed}
+              revealed={challenge.scoringRevealed}
+              panelBusy={busy}
+              setPanelBusy={setBusy}
+              onFinished={afterAction}
+              onError={setError}
+              clearMessages={() => {
+                setError(null);
+                setMessage(null);
+              }}
             />
             <OperatorAction
               title="Finalize Round"
@@ -365,6 +373,180 @@ export function OperatorPanel({ onClose }: { onClose: () => void }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The bracket reveal, as one button.
+ *
+ * Behind it is the longest sequence in the game — up to 17 tier-1 shard reveals, a promotion,
+ * semifinals, a final reveal and the apply, each its own wallet approval and each waiting on
+ * an MPC callback in between. Two things follow from that, and both are the whole point of
+ * this component:
+ *
+ *  1. The operator has to be told what they are signing up for BEFORE the first popup ("53
+ *     entries → 5 tier-1 shards → 2 semifinals → final. 16 approvals."), and shown steady
+ *     progress during, or a long run is indistinguishable from a hung one.
+ *  2. An interrupted run must resume. The panel asks the chain what is already done the
+ *     moment it opens, so a closed tab mid-sequence costs nothing but the reopen.
+ */
+function RevealWinnersAction({
+  operator,
+  roundId,
+  eligible,
+  revealed,
+  panelBusy,
+  setPanelBusy,
+  onFinished,
+  onError,
+  clearMessages,
+}: {
+  operator: OperatorActions;
+  roundId: number;
+  /** True when the round is closed (or finalized), fully scored and not yet revealed. */
+  eligible: boolean;
+  revealed: boolean;
+  panelBusy: boolean;
+  setPanelBusy: (busy: boolean) => void;
+  onFinished: (message: string) => Promise<void>;
+  onError: (message: string | null) => void;
+  clearMessages: () => void;
+}) {
+  const [status, setStatus] = useState<RevealStatus | null>(null);
+  const [progress, setProgress] = useState<RevealProgress | null>(null);
+  const [running, setRunning] = useState(false);
+
+  // Ask the chain what is already done. A failure here is not worth shouting about — the
+  // button still works, it just loses its plan summary — so it degrades to no status.
+  const refresh = useCallback(async () => {
+    if (!eligible || roundId <= 0) {
+      setStatus(null);
+      return;
+    }
+    try {
+      setStatus(await operator.inspectReveal(roundId));
+    } catch {
+      setStatus(null);
+    }
+  }, [operator, roundId, eligible]);
+
+  // Runs on open and whenever the round changes — this IS the resume detection.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refresh();
+  }, [refresh]);
+
+  const run = useCallback(async () => {
+    setPanelBusy(true);
+    setRunning(true);
+    setProgress(null);
+    clearMessages();
+    try {
+      await operator.revealWinners(roundId, setProgress);
+      await onFinished("Winners revealed!");
+    } catch (e) {
+      onError(errText(e));
+    } finally {
+      setRunning(false);
+      setPanelBusy(false);
+      setProgress(null);
+      void refresh();
+    }
+  }, [operator, roundId, setPanelBusy, clearMessages, onFinished, onError, refresh]);
+
+  const resuming = !!status?.inProgress;
+  const blocked = status?.blocked ?? null;
+  const approvals = status?.remainingSignatures ?? 0;
+
+  const hint = revealed
+    ? "This round's winners are already revealed."
+    : blocked
+      ? blocked
+      : status
+        ? `${status.summary} ${approvals} wallet approval${approvals === 1 ? "" : "s"}${resuming ? " left" : ""}.`
+        : "Reveals the top 3 through the bracket once every entry is scored.";
+
+  return (
+    <div className="rounded-lg border border-garden-moss/50 bg-black/20 p-3">
+      <div className="font-pixel text-[11px] uppercase tracking-wide text-garden-mint">
+        Reveal Winners
+      </div>
+      <p
+        className={`mt-1 text-[11px] leading-snug ${blocked ? "text-garden-gold/80" : "text-garden-parch/50"}`}
+      >
+        {hint}
+      </p>
+
+      {/* Resume prompt: what the chain says is already done. Only shown when there IS
+          something to resume, so an ordinary first run stays a single uncluttered button. */}
+      {resuming && !running && (
+        <div className="mt-2 rounded-md border border-garden-gold/40 bg-garden-gold/5 px-2.5 py-2">
+          <p className="font-pixel text-[9px] uppercase tracking-wide text-garden-gold">
+            Reveal already part-way through
+          </p>
+          <ul className="mt-1 list-disc pl-4 text-[10px] leading-snug text-garden-parch/60">
+            {status?.done.map((line) => <li key={line}>{line}</li>)}
+            {status?.repin && (
+              <li className="text-garden-gold/80">
+                The pinned partition does not match this round's entries — it will be re-pinned
+                and that tier revealed again.
+              </li>
+            )}
+          </ul>
+          <p className="mt-1 text-[10px] leading-snug text-garden-parch/40">
+            Resuming picks up from here; nothing already done is repeated.
+          </p>
+        </div>
+      )}
+
+      {/* Live progress. Deliberately plain: a phase label, a step count and a bar. The point
+          is only to distinguish "still working" from "stuck", across a run that can take
+          several minutes of MPC. */}
+      {running && (
+        <div className="mt-2.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="animate-pulseSoft font-body text-[11px] text-garden-cyan">
+              {progress?.label ?? "Starting…"}
+            </span>
+            {progress && progress.totalSteps > 0 && (
+              <span className="shrink-0 font-mono text-[10px] text-garden-parch/40">
+                {progress.step}/{progress.totalSteps}
+              </span>
+            )}
+          </div>
+          <div
+            className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-black/40"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={progress?.totalSteps ?? 0}
+            aria-valuenow={progress?.step ?? 0}
+            aria-label="Reveal progress"
+          >
+            <div
+              className="h-full rounded-full bg-garden-cyan transition-[width] duration-500"
+              style={{
+                width: progress && progress.totalSteps > 0
+                  ? `${Math.min(100, (progress.step / progress.totalSteps) * 100)}%`
+                  : "6%",
+              }}
+            />
+          </div>
+          <p className="mt-1 text-[10px] leading-snug text-garden-parch/40">
+            Keep this panel open — each step needs a wallet approval, and the encrypted
+            computations take a moment to come back.
+          </p>
+        </div>
+      )}
+
+      <button
+        type="button"
+        disabled={panelBusy || running || !eligible || !!blocked}
+        onClick={run}
+        className="mt-2 w-full rounded-md border border-garden-cyan/60 bg-garden-cyan/10 px-3 py-1.5 font-pixel text-[10px] uppercase tracking-wide text-garden-cyan transition hover:bg-garden-cyan/20 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {running ? "Revealing…" : resuming ? "Resume Reveal" : "Reveal Winners"}
+      </button>
     </div>
   );
 }

@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:bracket": "node --import ./scripts/ts-imports.mjs scripts/verify-bracket-plan.mjs"
   },
   "dependencies": {
     "@anchor-lang/core": "^1.0.2",

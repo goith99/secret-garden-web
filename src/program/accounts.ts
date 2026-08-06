@@ -126,6 +126,40 @@ export function hintPda(player: PublicKey): PublicKey {
   )[0];
 }
 
+// ---- bracket reveal PDAs (operator flow) ----------------------------------------------
+/** Per-round BracketState (seeds = ["bracket", round]). Also the SEMIFINAL tier of a
+ *  two-tier round — promote_tier1 writes the semifinal partition into this same account. */
+export function bracketPda(round: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [te.encode("bracket"), round.toBytes()],
+    PROGRAM_ID,
+  )[0];
+}
+/** Per-round Tier1State (seeds = ["tier1", round]). Its very ABSENCE is what selects the
+ *  original single-tier code path, so it exists only for rounds past 52 entries. */
+export function tier1Pda(round: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [te.encode("tier1"), round.toBytes()],
+    PROGRAM_ID,
+  )[0];
+}
+/** A shard reveal's result record (seeds = ["shardres", round, shard_index]). Index 255
+ *  (FINAL_SHARD_INDEX) is the FINAL reveal's record, sharing this namespace by design. */
+export function shardResultPda(round: PublicKey, shardIndex: number): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [te.encode("shardres"), round.toBytes(), Uint8Array.of(shardIndex)],
+    PROGRAM_ID,
+  )[0];
+}
+/** A semifinal reveal's result record (seeds = ["semires", round, semi_index]). A SEPARATE
+ *  namespace from shardres, or tier-1 shard k and semifinal k would collide on one address. */
+export function semiResultPda(round: PublicKey, semiIndex: number): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [te.encode("semires"), round.toBytes(), Uint8Array.of(semiIndex)],
+    PROGRAM_ID,
+  )[0];
+}
+
 // ---- mappers --------------------------------------------------------------------------
 function mapConfig(c: RawConfig): GardenConfig {
   return {

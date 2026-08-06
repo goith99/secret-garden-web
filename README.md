@@ -12,7 +12,9 @@ Built on Solana Devnet with Arcium MPC for private genome breeding.
 - Drag two starter flowers into the breeding pots
 - Crossbreed via Arcium MPC — your flower's genome stays encrypted and private
 - Daily competition rounds with hidden scoring — no one knows your score until reveal
-- Top 3 winners revealed by MPC at round end
+- Top 3 winners revealed by MPC at round end, through a bracket that scales to 221 entries
+  (shards of 13, plus a second tier past 52) — one operator click drives the whole sequence
+  and resumes it from on-chain state if it is interrupted
 - Daily Winners panel showing finished-round results (backed by Supabase)
 - Breeds-remaining indicator that enforces the per-round breeding limit
 - Profile migration notice that guides you through `migrate_profile` when the
@@ -37,6 +39,10 @@ npm install
 npm run dev      # → http://localhost:5173
 npm run build    # production build
 npm run lint     # eslint
+
+# Re-derives every past round's bracket partition from devnet and checks it against the
+# layout the program actually accepted. Read-only: no wallet, no transactions.
+npm run verify:bracket
 ```
 
 ## How to try it (Devnet)
