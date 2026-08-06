@@ -131,6 +131,28 @@ export function roundStatusLabel(code: RoundStatusCode): string {
   }
 }
 
+/**
+ * Prize paid per finishing rank, in SOL.
+ *
+ * SOURCE OF TRUTH IS THE BACKEND: `PRIZE_SOL` in secret-garden's `scripts/auto-cycle.ts` is the
+ * array that actually signs the treasury transfers. This is a MIRROR, and exists only because
+ * the frontend is a separate repository and cannot import from it — so the two must be changed
+ * TOGETHER. Currently both are the flat rate 0.5 SOL for ranks 1/2/3 (auto-cycle: [0.5, 0.5, 0.5]).
+ *
+ * Keyed by 1-based rank to match `round_winners.rank`; auto-cycle indexes the same values by
+ * (rank - 1). Supabase stores NO prize-amount column, so this map is the sole source of the
+ * figure shown to players: if it drifts from auto-cycle.ts, the UI silently misreports what was
+ * actually paid out.
+ *
+ * Ranks are paid only when filled — a 1-entrant round pays rank 1 alone, not the full pool.
+ */
+export const PRIZE_SOL_BY_RANK: Record<number, number> = { 1: 0.5, 2: 0.5, 3: 0.5 };
+
+/** Player-facing prize badge text for a finishing rank, e.g. "0.5 SOL". */
+export function prizeLabel(rank: number): string {
+  return `${PRIZE_SOL_BY_RANK[rank] ?? 0} SOL`;
+}
+
 export function experimentStatusLabel(code: ExperimentStatusCode): string {
   switch (code) {
     case ExperimentStatus.Completed:

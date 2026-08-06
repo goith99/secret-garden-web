@@ -2,8 +2,18 @@ import { useGame } from "../game/GameContext";
 import { Badge } from "./Badge";
 import { roundStatusLabel, traitName } from "../lib/presentation";
 import { useRoundMetadata } from "../hooks/useRoundMetadata";
+import { RoundStatus, type RoundStatusCode } from "../types";
 
-function hoursLeft(endTime: number): string {
+/**
+ * The countdown slot. STATUS WINS OVER THE CLOCK: a round that is closed or finalized is no
+ * longer counting down, so reporting time is misleading. Previously this consulted only
+ * `endTime`, which meant any expired round read "closing" forever — including a finalized one
+ * whose winners were already revealed, and indefinitely so whenever the next round had not yet
+ * been opened (the panel keeps showing `config.currentRound`, which stays on the finished round).
+ */
+function timeLabel(endTime: number, status: RoundStatusCode): string {
+  if (status === RoundStatus.Finalized) return "ended";
+  if (status === RoundStatus.Closed) return "judging";
   const secs = endTime - Math.floor(Date.now() / 1000);
   if (secs <= 0) return "closing";
   const h = Math.floor(secs / 3600);
@@ -41,7 +51,7 @@ export function CurrentRequest() {
           {roundName && <span className="text-garden-gold/90"> · {roundName}</span>}
         </span>
         <span className="shrink-0">{challenge.participantCount} entrants</span>
-        <span className="shrink-0">{hoursLeft(challenge.endTime)}</span>
+        <span className="shrink-0">{timeLabel(challenge.endTime, challenge.status)}</span>
       </div>
     </div>
   );

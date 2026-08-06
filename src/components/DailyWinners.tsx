@@ -1,10 +1,9 @@
 import { useGame } from "../game/GameContext";
 import { Badge } from "./Badge";
 import { useLatestWinners } from "../hooks/useRoundHistory";
+import { prizeLabel } from "../lib/presentation";
 
 const MEDAL: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
-/** Prize per rank, hardcoded to match the current on-chain prize structure. */
-const PRIZE_SOL: Record<number, number> = { 1: 5, 2: 3, 3: 2 };
 
 /** Shorten a wallet to "first4…last4" for the winners list. */
 function shortWallet(address: string): string {
@@ -70,7 +69,7 @@ export function DailyWinners() {
                 </p>
               </div>
               <Badge className="border-garden-gold text-garden-gold" title="Prize">
-                {PRIZE_SOL[w.rank] ?? 0} SOL
+                {prizeLabel(w.rank)}
               </Badge>
             </li>
           ))}
