@@ -30,8 +30,10 @@ export function DesktopLayout() {
           </p>
         </aside>
 
-        {/* CENTER — Greenhouse (min-w-0 so the pot row never forces grid overflow) */}
-        <section className="min-h-0 min-w-0">
+        {/* CENTER — Greenhouse (min-w-0 so the pot row never forces grid overflow). The page
+            itself never scrolls, so this column carries the last-resort scroll: at a short
+            desktop height the BloomReady actions stay reachable instead of being clipped. */}
+        <section className="gh-scroll min-h-0 min-w-0 overflow-y-auto">
           <Greenhouse />
         </section>
 

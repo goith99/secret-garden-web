@@ -33,7 +33,11 @@ export function StarterGarden() {
   };
 
   return (
-    <div className="gh-scroll pointer-events-none flex shrink-0 items-end justify-around gap-1 overflow-x-auto px-2 pb-2 md:px-5">
+    // `pointer-events-auto`: six starters are wider than a phone, so this row is a horizontal
+    // scroller — and a `pointer-events-none` scroller cannot be swiped, which stranded the last
+    // starters off-screen. The backdrop behind it is aria-hidden and inert, so taking pointer
+    // events here costs nothing.
+    <div className="gh-scroll pointer-events-auto flex shrink-0 items-end justify-around gap-1 overflow-x-auto px-2 pb-2 md:px-5">
       {starters.map((f) => {
         const planted = inPot.has(f.id);
         const selected = selectedFlowerId === f.id;

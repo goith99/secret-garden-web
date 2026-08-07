@@ -13,7 +13,9 @@ export function MobileTabBar() {
   const gardenAlert = isCycling || phase === "BloomReady";
 
   return (
-    <nav className="flex shrink-0 border-t border-garden-moss/60 bg-garden-green/70">
+    // index.html opts into `viewport-fit=cover`, so the bar would otherwise sit under the iOS
+    // home indicator — pad by the safe-area inset to keep every tab tappable.
+    <nav className="flex shrink-0 border-t border-garden-moss/60 bg-garden-green/70 pb-[env(safe-area-inset-bottom)]">
       {TABS.map((t) => {
         const active = activeTab === t.id;
         return (

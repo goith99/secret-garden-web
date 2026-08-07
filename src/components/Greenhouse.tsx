@@ -31,22 +31,40 @@ export function Greenhouse() {
   const breedsSpent = breedsRemaining <= 0;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2">
+    // Desktop (lg+, matching App's 1024px layout switch) keeps the no-page-scroll contract:
+    // h-full, and the scene shrinks so the controls strip is always visible. Mobile CANNOT
+    // honour that — a phone has no room for the pot row PLUS the BloomReady actions — so there
+    // the column takes AT LEAST the viewport and is free to grow past it, letting MobileLayout's
+    // already-scrollable <main> carry the overflow. Without this the BloomReady buttons
+    // ("Submit to Challenge" / "Save to Collection") were laid out below the fold of a clipped,
+    // unscrollable box and could not be reached at all.
+    <div className="flex min-h-full flex-col gap-2 lg:h-full lg:min-h-0">
       {/* The night garden: animated scene + planted starters + floating pots. A small min-h
           keeps the scene readable, but flex-1 lets it shrink so the controls strip below
-          always stays fully visible at 100% zoom (1366×768) — no scroll, no cut-off. */}
-      <div className="relative min-h-[200px] flex-1 overflow-hidden rounded-xl border border-garden-moss/70 bg-garden-deep/40 shadow-panel">
-        <NightGardenScene theme={background} />
+          always stays fully visible at 100% zoom (1366×768) — no scroll, no cut-off.
+
+          `overflow-x-clip` (NOT overflow-hidden): the pot row is three fixed-width pots and can
+          still be a few px wider than a narrow phone. Clipping only the X axis keeps that from
+          becoming a page-wide horizontal scroll, while leaving overflow-y visible — `hidden` or
+          `auto` on one axis forces the other to `auto` and would re-clip the BloomReady buttons. */}
+      <div className="relative flex min-h-[200px] flex-1 flex-col overflow-x-clip rounded-xl border border-garden-moss/70 bg-garden-deep/40 shadow-panel">
+        {/* Backdrop only. It owns the rounded clip that used to live on the box itself — the box
+            must NOT clip, or a play layer taller than the scene is silently cut off (see above).
+            The scene is absolutely positioned, so it never contributes to the box's height. */}
+        <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-xl">
+          <NightGardenScene theme={background} />
+        </div>
 
         {/* Foreground play layer: pots in a top band, starters in a bottom band. A flex column
             with justify-between keeps the two bands apart at ANY scene height, so filled /
             BloomReady pots never collide with the starter row (the old absolute top-half + bottom
-            layers overlapped at 1366×768). The layer passes pointer events through to the scene;
-            the pots and starters opt back in. */}
-        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col justify-between gap-2 px-3 py-2">
+            layers overlapped at 1366×768). IN FLOW (not absolute) so its content is what sets the
+            scene's minimum height: a taller pot column grows the box instead of overflowing it.
+            The layer passes pointer events through to the scene; the pots and starters opt back in. */}
+        <div className="pointer-events-none relative z-10 flex flex-1 flex-col justify-between gap-2 px-1 py-2 md:px-3">
           {/* Pot row (top band) — fixed min-height so it always reserves space. */}
           <div className="flex min-h-[7rem] shrink-0 items-end justify-center">
-            <div className="pointer-events-auto flex items-end justify-center gap-2 [filter:drop-shadow(0_16px_18px_rgba(0,0,0,0.45))] md:gap-4 xl:gap-6">
+            <div className="pointer-events-auto flex items-end justify-center gap-1 [filter:drop-shadow(0_16px_18px_rgba(0,0,0,0.45))] md:gap-4 xl:gap-6">
               <ParentPot pot="A" label="Parent A" />
               <HybridPot />
               <ParentPot pot="B" label="Parent B" />
