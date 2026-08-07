@@ -67,7 +67,7 @@ import {
   fetchFlower,
 } from "./accounts";
 import type { Environment, Flower } from "../types";
-import { TxError, type TxErrorKind } from "./errors";
+import { TxError, classifyError, type TxErrorKind } from "./errors";
 
 // Re-exported so the many components that already import TxError from this module keep
 // working; the class itself moved to ./errors so reveal.ts can throw it without a cycle.
@@ -166,125 +166,6 @@ async function rentMinimums(
 /** Crypto-strong random bytes in the browser (no node `crypto`). */
 function randomBytes(n: number): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(n));
-}
-
-// ---- player-vocabulary error classification ------------------------------------------
-/**
- * Every string a wallet error might hide its real reason in, lowercased and joined.
- *
- * Classifying on `e.message` alone misses the reason entirely for three real shapes:
- *
- *  - wallet-adapter wraps EVERY send failure in WalletSendTransactionError, but some wallets
- *    hand it an empty message and leave the real error on the wrapped `.error` cause;
- *  - web3.js's SendTransactionError keeps the useful text in `transactionMessage` /
- *    `transactionLogs`, NOT in `message` (see its constructor: message is just
- *    "Simulation failed. \nMessage: …");
- *  - either of those can sit on the wrapper or on the cause.
- *
- * So collect from all of them. This is what lets an insufficient-funds failure be told apart
- * from a genuine chain mismatch when both arrive with an empty top-level message.
- */
-function errorHaystack(e: unknown): string {
-  const parts: string[] = [];
-  const push = (v: unknown) => {
-    if (typeof v === "string" && v.length > 0) parts.push(v);
-  };
-
-  if (e instanceof Error) push(e.message);
-  else if (e != null) push(String(e));
-
-  // WalletError keeps the wrapped cause on `.error`.
-  const cause = (e as { error?: unknown })?.error;
-  if (cause instanceof Error) push(cause.message);
-  else push(cause);
-
-  // SendTransactionError fields, on the wrapper or on the cause.
-  for (const src of [e, cause] as Array<
-    { transactionMessage?: unknown; transactionLogs?: unknown } | null | undefined
-  >) {
-    push(src?.transactionMessage);
-    if (Array.isArray(src?.transactionLogs)) push(src.transactionLogs.join("\n"));
-  }
-
-  return parts.join("\n").toLowerCase();
-}
-
-function classifyError(e: unknown): TxError {
-  if (e instanceof TxError) return e;
-  const msg = e instanceof Error ? e.message : String(e);
-  const name = e instanceof Error ? e.name : "";
-  const code = (e as { code?: number })?.code;
-  // Match against the wrapper AND its cause, not just the top-level message.
-  const lower = errorHaystack(e);
-  // Prefer the top-level message for display/logging; fall back to the cause when it is empty
-  // so an unwrapped-only reason is not reported as a blank error.
-  const detail = msg || (e as { error?: { message?: string } })?.error?.message || "";
-
-  // ORDER MATTERS, and the order is: bare-chain-mismatch -> insufficient -> network -> rejected.
-  //
-  // The rejection test is by far the broadest: it matches on the error NAME, and wallet-adapter
-  // wraps EVERY send failure in WalletSendTransactionError. Run it first and it swallows
-  // everything as "the user cancelled" — which it did, for both wrong-network (fixed earlier)
-  // and insufficient-funds (fixed here). Anything that classifies on message CONTENT has to be
-  // tested before it. Insufficient goes ahead of network because the empty-top-level-message
-  // variant is otherwise indistinguishable from a chain mismatch until the cause is unwrapped.
-
-  // The standard wallet adapter throws a BARE WalletSendTransactionError — no message, no
-  // wrapped cause — from exactly one place: the pre-send check that the connected account
-  // supports the chain the app asked for (@solana/wallet-standard-wallet-adapter-base,
-  // adapter.ts, `if (!account.chains.includes(chain)) throw new WalletSendTransactionError()`).
-  // That IS the wallet telling us it is not on devnet. Its message-carrying sibling wraps a
-  // real underlying send error and is handled further down.
-  // `!lower` (not `!msg`) is the guard that matters: the bare chain-mismatch error carries NO
-  // cause at all, so its haystack is empty. A send failure that merely LOOKS bare — empty
-  // top-level message, real reason on the wrapped cause — has a non-empty haystack and must
-  // fall through to the checks below, or it gets mis-reported as "switch to devnet" when the
-  // player is actually just out of SOL.
-  if (name === "WalletSendTransactionError" && !msg && !lower) {
-    return new TxError("network", "Make sure your wallet is set to Devnet and try again.");
-  }
-  // Not enough SOL to pay fees / rent for the new accounts. MUST be tested before the
-  // rejection branch below: that branch matches on the error NAME alone, and wallet-adapter
-  // wraps every send failure in WalletSendTransactionError — so it used to swallow every
-  // insufficient-funds failure as "the user cancelled", leaving this branch unreachable on
-  // the player path. First-time setup needs ~0.0288 SOL (profile + six starter FlowerRecords),
-  // so this is the single most likely genuine failure for a new wallet.
-  if (
-    lower.includes("insufficient") ||
-    lower.includes("debit an account but found no record of a prior credit") ||
-    lower.includes("attempt to debit")
-  ) {
-    return new TxError("insufficient", detail);
-  }
-  // Wrong network: a devnet tx submitted to another cluster (common with wallets the dApp
-  // can't pin to devnet, e.g. Phantom) can't find the devnet blockhash or the program account.
-  // Flag it so the network guard can take over the screen and prompt a switch to Devnet.
-  if (
-    lower.includes("blockhash not found") ||
-    lower.includes("blockhashnotfound") ||
-    lower.includes("program that does not exist") ||
-    lower.includes("programaccountnotfound") ||
-    lower.includes("invalid program for execution")
-  ) {
-    return new TxError("network", "Make sure your wallet is set to Devnet and try again.");
-  }
-  // Wallet popup closed / user declined — treat as a no-op cancel (caller shows nothing or a
-  // gentle "cancelled" note). Phantom reports "User rejected …"; Solflare "Transaction
-  // cancelled" or EIP-1193 code 4001. Anything else is a genuine failure (handled below).
-  if (
-    code === 4001 ||
-    name.includes("WalletSignTransaction") ||
-    name.includes("WalletSendTransaction") ||
-    lower.includes("user rejected") ||
-    lower.includes("user denied") ||
-    lower.includes("rejected the request") ||
-    lower.includes("transaction cancelled") ||
-    lower.includes("cancelled") ||
-    lower.includes("canceled")
-  ) {
-    return new TxError("rejected", detail);
-  }
-  return new TxError("failed", detail);
 }
 
 // ---- send + confirm over HTTP (wallet sign-AND-send) ---------------------------------

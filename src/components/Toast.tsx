@@ -1,7 +1,9 @@
 /**
  * Tiny self-contained toast system for transaction feedback (no external library, pure CSS via
  * Tailwind). Toasts appear bottom-center, stack, auto-dismiss after 4s, and can be closed with
- * the ✕. Use it through `useToast()`:  `toast.success("…")` / `toast.error("…")`.
+ * the ✕. Use it through `useToast()`:  `toast.success("…")` / `toast.error("…")` /
+ * `toast.info("…")` — info is the calm one, for something that simply didn't happen (a wallet
+ * popup dismissed). That is not a failure and must not be dressed as one.
  *
  * Player vocabulary only — callers pass already-friendly messages.
  */
@@ -15,7 +17,7 @@ import {
   type ReactNode,
 } from "react";
 
-type ToastVariant = "success" | "error";
+type ToastVariant = "success" | "error" | "info";
 
 interface ToastItem {
   id: number;
@@ -26,6 +28,7 @@ interface ToastItem {
 interface ToastApi {
   success: (message: string) => void;
   error: (message: string) => void;
+  info: (message: string) => void;
 }
 
 const AUTO_DISMISS_MS = 4000;
@@ -50,7 +53,11 @@ function ToastView({ toast, onClose }: { toast: ToastItem; onClose: (id: number)
   const tone =
     toast.variant === "success"
       ? "border-garden-leaf bg-garden-green/95 text-garden-mint"
-      : "border-garden-gold/70 bg-garden-deep/95 text-garden-gold";
+      : toast.variant === "info"
+        ? "border-garden-moss bg-garden-deep/95 text-garden-parch"
+        : "border-garden-gold/70 bg-garden-deep/95 text-garden-gold";
+
+  const icon = toast.variant === "success" ? "🌱" : toast.variant === "info" ? "🍃" : "⚠️";
 
   return (
     <div
@@ -58,7 +65,7 @@ function ToastView({ toast, onClose }: { toast: ToastItem; onClose: (id: number)
       className={`pointer-events-auto flex max-w-xs items-start gap-2 rounded-lg border px-3 py-2 shadow-lg animate-rise ${tone}`}
     >
       <span aria-hidden className="mt-0.5 text-sm leading-none">
-        {toast.variant === "success" ? "🌱" : "⚠️"}
+        {icon}
       </span>
       <p className="flex-1 font-body text-xs leading-snug">{toast.message}</p>
       <button
@@ -88,6 +95,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     () => ({
       success: (m) => push(m, "success"),
       error: (m) => push(m, "error"),
+      info: (m) => push(m, "info"),
     }),
     [push],
   );
