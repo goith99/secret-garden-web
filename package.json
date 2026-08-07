@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "verify:bracket": "node --import ./scripts/ts-imports.mjs scripts/verify-bracket-plan.mjs",
-    "verify:tx-errors": "node --import ./scripts/ts-imports.mjs scripts/verify-tx-errors.mjs"
+    "verify:tx-errors": "node --import ./scripts/ts-imports.mjs scripts/verify-tx-errors.mjs",
+    "verify:breed-lock": "node --import ./scripts/ts-imports.mjs scripts/verify-breed-lock.mjs"
   },
   "dependencies": {
     "@anchor-lang/core": "^1.0.2",

@@ -318,22 +318,47 @@ export async function fetchActiveRound(
   return acc ? mapRound(acc) : null;
 }
 
+/** This wallet's entry in one specific round: which flower it put in, and when. */
+export interface RoundEntry {
+  /** The entered FlowerRecord's address — comparable to `Flower.id`. */
+  flowerId: string;
+  /** Unix seconds the entry was submitted. */
+  submittedAt: number;
+}
+
 /**
- * Whether this wallet has ALREADY submitted an entry in the given round. The CompetitionEntry
+ * This wallet's entry in the given round, or null if it hasn't entered. The CompetitionEntry
  * PDA is seeded by [round, player] (see entryPda / the submit_entry seeds in the IDL), so a
  * single wallet can hold at most one entry per round — its mere existence means "entered".
- * Returns false when no round is open (roundId ≤ 0) or the entry account doesn't exist yet,
+ * Returns null when no round is open (roundId ≤ 0) or the entry account doesn't exist yet,
  * so a fresh round (new round_id → new, non-existent PDA) reads as not-entered automatically.
+ *
+ * Returns the ENTRY, not a bare "has entered" boolean, because the two questions the UI asks
+ * are different and only one of them is answerable by a boolean:
+ *
+ *   "has this wallet used its entry this round?"  → `!== null`     (gates every Submit control)
+ *   "is THIS flower the one in the live round?"   → `flowerId ===` (gates that flower's breed)
+ *
+ * The second question is the one that matters for breeding, and a flower's own
+ * `status == Submitted` cannot answer it: that flag is written once by submit_entry and NEVER
+ * cleared on-chain (no instruction resets it — close_round/finalize_round don't even take
+ * FlowerRecord accounts), so it means "was submitted to SOME round, ever", not "is in the
+ * live round". Reading the live round's entry is the only way to scope the lock to the round
+ * it actually belongs to — and it costs nothing extra, since this account was already fetched.
  */
-export async function fetchHasEnteredRound(
+export async function fetchRoundEntry(
   program: SecretGardenProgram,
   owner: PublicKey,
   roundId: number,
-): Promise<boolean> {
-  if (roundId <= 0) return false; // no round open → nothing to enter
+): Promise<RoundEntry | null> {
+  if (roundId <= 0) return null; // no round open → nothing to enter
   const entry = entryPda(roundPda(roundId), owner);
   const acc = await program.account.competitionEntry.fetchNullable(entry);
-  return acc !== null;
+  if (!acc) return null;
+  return {
+    flowerId: acc.flowerRecord.toBase58(),
+    submittedAt: Number(acc.submittedAt),
+  };
 }
 
 /** A hybrid (sealed genome) is one breeding result; build the Hybrid Journal from them. */

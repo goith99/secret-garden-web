@@ -88,6 +88,11 @@ export interface GardenInitial {
    * once this is true. Resets when a new round opens. See useGardenData.hasEnteredCurrentRound.
    */
   hasEnteredCurrentRound?: boolean;
+  /**
+   * The FlowerRecord id this wallet entered in the CURRENTLY OPEN round, or null. Scopes the
+   * breeding lock to the live round — see useGardenData.currentRoundEntryFlowerId.
+   */
+  currentRoundEntryFlowerId?: string | null;
   /** True when the connected wallet's profile is pre-5D and must be migrated before breed/submit. */
   profileNeedsMigration?: boolean;
   /**
@@ -131,6 +136,13 @@ interface GameContextValue {
    * "Submit to Challenge" control is disabled (one entry per wallet per round on-chain).
    */
   hasEnteredCurrentRound: boolean;
+  /**
+   * True for the ONE flower this wallet has entered in the currently open round — the only
+   * flower that is actually breed-locked right now. False for a flower entered in a PAST round:
+   * that flower's `status` is still Submitted (nothing on-chain clears it), but the program
+   * lets it breed, so the UI must not.
+   */
+  isEnteredInCurrentRound: (flower: Flower) => boolean;
   /** How many crosses the player can still start this round (5 when standalone/no profile). */
   breedsRemaining: number;
   // ---- hybrid collection cap (starters excluded, mirroring the on-chain accounting) ----
@@ -271,7 +283,50 @@ export function GameProvider({
   const roundOpen = challenge.roundId > 0 && challenge.status === RoundStatus.Open;
   // One entry per wallet per round on-chain — once entered, every Submit control is disabled.
   const hasEnteredCurrentRound = initial?.hasEnteredCurrentRound ?? false;
+  const currentRoundEntryFlowerId = initial?.currentRoundEntryFlowerId ?? null;
   const authority = initial?.authority ?? null;
+
+  /**
+   * The flower this session just entered, held only until the refetch reports it back as
+   * `currentRoundEntryFlowerId`. Closes the window between "submit_entry confirmed" and "the
+   * new entry has been read back", during which the breed lock would otherwise not yet apply.
+   * Cleared on any round change so it can never outlive the round it belongs to.
+   */
+  const [justEnteredFlowerId, setJustEnteredFlowerId] = useState<string | null>(null);
+  useEffect(() => {
+    // Reacting to the round advancing (external state): a stale optimistic id must not leak
+    // into the next round, where it would re-create the very "locked forever" bug.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setJustEnteredFlowerId(null);
+  }, [challenge.roundId]);
+
+  /**
+   * Is THIS flower the one entered in the currently open round?
+   *
+   * This replaces the old `flower.status === Submitted` test for every BREEDING decision. That
+   * test was wrong because `status` is a one-way flag: submit_entry writes Submitted and no
+   * instruction ever writes it back (close_round / finalize_round don't even take FlowerRecord
+   * accounts), so it means "was entered in SOME round, ever" — it never expires. Combined with
+   * `roundOpen`, which asks about the CURRENT round and knows nothing about the flower, a
+   * flower entered once was re-locked the moment any later round opened, forever.
+   *
+   * The live round's CompetitionEntry is the authoritative answer: its PDA is seeded by
+   * [round, player], so it exists only for the round it belongs to and names exactly one
+   * flower. When the round advances, the new round's entry PDA doesn't exist yet, so this goes
+   * false on its own — which is what the old code only ASSUMED the on-chain status would do.
+   *
+   * Standalone/demo mode has no entry to read, so it falls back to the flower's own status
+   * (the mock cycle sets Submitted itself and there is only ever one round).
+   */
+  const isEnteredInCurrentRound = useCallback(
+    (flower: Flower): boolean => {
+      if (!roundOpen) return false; // nothing is entered in a round that isn't open
+      if (!onRefetch) return flower.status === FlowerStatus.Submitted; // mock mode
+      const entered = currentRoundEntryFlowerId ?? justEnteredFlowerId;
+      return entered !== null && flower.id === entered;
+    },
+    [roundOpen, onRefetch, currentRoundEntryFlowerId, justEnteredFlowerId],
+  );
 
   // Breeds remaining this round. The on-chain counter is stale once the round advances:
   // it only applies when the player last bred in the CURRENT round; otherwise the cap is
@@ -371,10 +426,14 @@ export function GameProvider({
 
   const placeInPot = useCallback(
     (pot: PotId, flower: Flower) => {
-      // A flower entered in the OPEN round can't breed until the next round (the program would
-      // reject it). The card blocks drag/tap up front; this guards any path that slips through
-      // (e.g. a stray drop) and surfaces a brief pot-area note.
-      if (flower.status === FlowerStatus.Submitted && roundOpen) {
+      // The flower entered in the CURRENTLY OPEN round is held back from breeding: breeding
+      // locks its parents mid-cross and the round still has to score it. Note this is a
+      // deliberate UI choice, NOT a program constraint — StartBreeding only rejects
+      // `status == LOCKED` (lib.rs:2290/2297), so the program would happily accept it.
+      // A flower entered in a PAST round is NOT held back, even though its status is still
+      // Submitted forever: that round is done with it. The card blocks drag/tap up front;
+      // this guards any path that slips through (e.g. a stray drop).
+      if (isEnteredInCurrentRound(flower)) {
         setDropBlockedNotice("This flower is in the current challenge");
         return;
       }
@@ -388,7 +447,7 @@ export function GameProvider({
       }
       setSelectedFlowerId(null);
     },
-    [roundOpen],
+    [isEnteredInCurrentRound],
   );
 
   const autoPlace = useCallback(
@@ -585,9 +644,11 @@ export function GameProvider({
         if (!mounted.current) return;
         resetAndRefetch(); // entered on-chain; now save + refresh as usual
       } catch (e) {
-        // Stay at BloomReady so the player can retry or save. Declined → nothing; a real
-        // failure → a toast so the player knows the entry didn't go through.
-        if (!(e instanceof TxError && e.kind === "rejected")) {
+        // Stay at BloomReady so the player can retry or save. A decline is not a failure — say
+        // plainly that nothing happened; only a real failure gets the warning toast.
+        if (e instanceof TxError && e.kind === "rejected") {
+          toast.info("Transaction cancelled. Your bloom is still here.");
+        } else {
           toast.error("Couldn't submit to challenge. Try again.");
         }
       } finally {
@@ -636,11 +697,18 @@ export function GameProvider({
               f.id === flower.id ? { ...f, status: FlowerStatus.Submitted } : f,
             ),
           );
+          // ...and optimistically own the round's entry slot too, so the breed lock applies to
+          // this flower IMMEDIATELY. `currentRoundEntryFlowerId` only arrives with the refetch
+          // below, and the flower's own status can't stand in for it (it never expires — that
+          // is the whole bug this predicate exists to avoid).
+          setJustEnteredFlowerId(flower.id);
           void onRefetch();
         } catch (e) {
-          // Leave the flower Active so the GO button stays available. Declined → show nothing;
-          // a real failure → a toast so the player knows it didn't go through.
-          if (!(e instanceof TxError && e.kind === "rejected")) {
+          // Leave the flower Active so the GO button stays available. A decline is not a failure
+          // — say so calmly; only a real failure gets the warning toast.
+          if (e instanceof TxError && e.kind === "rejected") {
+            toast.info("Transaction cancelled.");
+          } else {
             toast.error("Couldn't submit to challenge. Try again.");
           }
         } finally {
@@ -761,6 +829,7 @@ export function GameProvider({
       newBloom,
       roundOpen,
       hasEnteredCurrentRound,
+      isEnteredInCurrentRound,
       breedsRemaining,
       breedError,
       breedNotice,
@@ -809,7 +878,7 @@ export function GameProvider({
       hint, hintBusy, hintNotice, canCheckMatch, checkMatch, dismissHint,
       hybridCount, collectionFull, releasingId, canRelease, releaseFlower, releaseNotice,
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
-      newBloom, roundOpen, hasEnteredCurrentRound, breedsRemaining, breedError, breedNotice, dropBlockedNotice, journal, challenge, winners, activeTab, submittingId,
+      newBloom, roundOpen, hasEnteredCurrentRound, isEnteredInCurrentRound, breedsRemaining, breedError, breedNotice, dropBlockedNotice, journal, challenge, winners, activeTab, submittingId,
       bloomToast, authority, profileNeedsMigration, migrating, migrateError, migrateProfile, refetchGarden,
       selectFlower, placeInPot, autoPlace, clearPot,
       setEnvironment, startCrossbreed, collectBloom, submitBloom, resetAfterFailure, canSubmit,

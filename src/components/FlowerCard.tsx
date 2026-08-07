@@ -43,6 +43,7 @@ export function FlowerCard({
     profileNeedsMigration,
     roundOpen,
     hasEnteredCurrentRound,
+    isEnteredInCurrentRound,
     hint,
     hintBusy,
     hintNotice,
@@ -59,13 +60,23 @@ export function FlowerCard({
   // for an irreversible action, without a modal interrupting the garden.
   const [armed, setArmed] = useState(false);
 
+  // NOTE: `submitted` means "was entered in SOME round, at some point" — NOT "is in the live
+  // round". `submit_entry` writes FLOWER_STATUS_SUBMITTED once and NO instruction ever writes it
+  // back (close_round / finalize_round don't even take FlowerRecord accounts), so this flag never
+  // expires. It still gates the submit/release controls, because those are genuinely blocked
+  // on-chain by `status == FLOWER_STATUS_ACTIVE` — that's a program-level gap tracked separately.
   const submitted = flower.status === FlowerStatus.Submitted;
   // The player already entered THIS round (one entry per round) — every other flower's submit
   // is locked out until the next round opens. `roundOpen` keeps this quiet between rounds.
   const enteredAnother = hasEnteredCurrentRound && roundOpen && !submitted;
-  // Entered in the OPEN round → locked out of breeding until next round (the program rejects it).
-  // Status resets to Active when a new round opens, so this clears itself then.
-  const locked = submitted && roundOpen;
+  // BREED lock — scoped to the live round via the round's own CompetitionEntry, not the flower's
+  // permanent status flag. This used to be `submitted && roundOpen`, which was wrong twice over:
+  // `submitted` never expires, and `roundOpen` asks about the CURRENT round while knowing nothing
+  // about which round the flower entered — so every flower ever submitted was re-locked the
+  // moment any later round opened, forever. Breeding is NOT blocked on-chain for these flowers
+  // (StartBreeding rejects only `status == LOCKED`, lib.rs:2290/2297), so this lock is the UI's
+  // own — and it must end when the flower's round does.
+  const locked = isEnteredInCurrentRound(flower);
   const submitting = submittingId === flower.id;
   const goEnabled = canSubmit(flower);
 
@@ -212,15 +223,24 @@ export function FlowerCard({
       {showSubmit &&
         (submitted ? (
           <>
+            {/* "Entered" alone is a permanent historical marker — the flower was entered in
+                SOME round, at some point (its on-chain status never clears). Only the flower
+                holding the LIVE round's entry gets the round-scoped wording, so a past entry
+                never reads as if it were still tied up. `leading-tight` lets the longer label
+                wrap to two lines inside the pill on the narrowest column. */}
             <span
-              className="rounded-md border border-garden-gold/70 bg-garden-deep/80 px-2 py-1 text-center font-pixel text-[9px] uppercase tracking-wide text-garden-gold"
-              title="Already entered in the challenge"
+              className="rounded-md border border-garden-gold/70 bg-garden-deep/80 px-2 py-1 text-center font-pixel text-[9px] uppercase leading-tight tracking-wide text-garden-gold"
+              title={
+                locked
+                  ? "Entered in the current challenge round"
+                  : "Entered in a past challenge round"
+              }
             >
-              Entered
+              {locked ? "Entered this round" : "Entered"}
             </span>
             {locked && (
               <span className="px-1 text-center font-body text-[9px] leading-tight text-garden-parch/50">
-                In this round&apos;s challenge — available next round
+                Breeding resumes when this round ends
               </span>
             )}
           </>

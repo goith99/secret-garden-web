@@ -14,7 +14,7 @@ import {
   fetchActiveRound,
   fetchFlowerRecords,
   fetchGameConfig,
-  fetchHasEnteredRound,
+  fetchRoundEntry,
   fetchPlayerProfile,
   isHybrid,
   type GardenConfig,
@@ -43,6 +43,13 @@ export interface GardenData {
    * false automatically when a new round opens (the new round's entry PDA doesn't exist yet).
    */
   hasEnteredCurrentRound: boolean;
+  /**
+   * The FlowerRecord address this wallet entered in the CURRENTLY OPEN round, or null when it
+   * hasn't entered (or no round is open). This — not a flower's own `status` — is what scopes
+   * the breeding lock to the round it belongs to: `status == Submitted` is written once by
+   * submit_entry and never cleared on-chain, so it means "was entered in SOME round, ever".
+   */
+  currentRoundEntryFlowerId: string | null;
   /** True when the connected wallet's profile is a pre-5D (68-byte) account needing migration. */
   profileNeedsMigration: boolean;
   /** Reload on-chain data. Resolves true on success, false if the fetch failed. */
@@ -74,6 +81,7 @@ const EMPTY: DataState = {
   loading: true,
   error: null,
   hasEnteredCurrentRound: false,
+  currentRoundEntryFlowerId: null,
   profileNeedsMigration: false,
 };
 
@@ -131,6 +139,7 @@ export function useGardenData(): GardenData {
           loading: false,
           error: null,
           hasEnteredCurrentRound: false, // no wallet → no entry
+          currentRoundEntryFlowerId: null,
           profileNeedsMigration: false,
         });
         return true;
@@ -149,6 +158,7 @@ export function useGardenData(): GardenData {
           loading: false,
           error: null,
           hasEnteredCurrentRound: false,
+          currentRoundEntryFlowerId: null,
           profileNeedsMigration: false,
         });
         return false;
@@ -172,6 +182,7 @@ export function useGardenData(): GardenData {
           loading: false,
           error: null,
           hasEnteredCurrentRound: false,
+          currentRoundEntryFlowerId: null,
           profileNeedsMigration: false,
         });
         return true;
@@ -185,10 +196,13 @@ export function useGardenData(): GardenData {
       const activeRound = gameConfig
         ? await fetchActiveRound(program, gameConfig.currentRound)
         : null;
-      // Has this wallet already entered the live round? (one entry per wallet per round)
-      const hasEnteredCurrentRound = activeRound
-        ? await fetchHasEnteredRound(program, owner, activeRound.roundId)
-        : false;
+      // This wallet's entry in the LIVE round (one entry per wallet per round). One fetch
+      // answers both questions the UI asks: whether the wallet's entry is spent this round,
+      // and WHICH flower is in it — the latter being what scopes the breeding lock correctly.
+      const currentRoundEntry = activeRound
+        ? await fetchRoundEntry(program, owner, activeRound.roundId)
+        : null;
+      const hasEnteredCurrentRound = currentRoundEntry !== null;
       if (my !== reqId.current) return false;
 
       setState({
@@ -200,6 +214,7 @@ export function useGardenData(): GardenData {
         loading: false,
         error: null,
         hasEnteredCurrentRound,
+        currentRoundEntryFlowerId: currentRoundEntry?.flowerId ?? null,
         profileNeedsMigration: playerProfile.needsMigration,
       });
       return true;
