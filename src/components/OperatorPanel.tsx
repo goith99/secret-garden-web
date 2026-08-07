@@ -28,6 +28,11 @@ import {
 } from "../program/transactions";
 import type { RevealProgress, RevealStatus } from "../program/reveal";
 import {
+  SCORE_BATCH_SIZE,
+  scoreTransactionCount,
+  type ScoreProgress,
+} from "../program/scoring";
+import {
   DEFAULT_BACKGROUND,
   GARDEN_BACKGROUNDS,
   saveRoundMetadata,
@@ -61,6 +66,7 @@ export function OperatorPanel({ onClose }: { onClose: () => void }) {
   const { address, signMessage } = useGardener();
 
   const [entries, setEntries] = useState<OperatorEntry[] | null>(null);
+  const [scoreProgress, setScoreProgress] = useState<ScoreProgress | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -175,28 +181,51 @@ export function OperatorPanel({ onClose }: { onClose: () => void }) {
     }
   }, [operator, afterAction, roundId]);
 
+  /**
+   * Scoring is batched — five entries per transaction — so progress is reported per
+   * TRANSACTION, the same unit the reveal reports in. See src/program/scoring.ts.
+   *
+   * The outcome is reported literally rather than as a flat "all entries scored": a run can
+   * legitimately queue fewer than it set out to (entries already in flight are skipped, a
+   * failing entry is recorded and stepped over), and an operator who is about to press
+   * Finalize needs to know that before it becomes irreversible.
+   */
   const onScoreEntries = useCallback(async () => {
     setBusy(true);
     setError(null);
     setMessage(null);
+    setScoreProgress(null);
     try {
-      const all = await operator.fetchRoundEntries(roundId);
-      const todo = all.filter((e) => !e.scored);
-      if (todo.length === 0) {
-        setMessage("All entries are already scored. Ready to reveal.");
+      const outcome = await operator.scoreEntries(roundId, setScoreProgress);
+      if (outcome.queued === 0 && outcome.failed.length === 0) {
+        setMessage("All entries are already scored or being scored. Ready to reveal.");
         return;
       }
-      for (let i = 0; i < todo.length; i++) {
-        setMessage(`Scoring entry ${i + 1} of ${todo.length}...`);
-        await operator.queueScoreEntry(todo[i].pubkey);
+      const parts = [
+        `Queued ${outcome.queued} entr${outcome.queued === 1 ? "y" : "ies"} in ` +
+          `${outcome.transactions} transaction${outcome.transactions === 1 ? "" : "s"}.`,
+      ];
+      if (outcome.skipped > 0) {
+        parts.push(`${outcome.skipped} were already scored or in flight.`);
       }
-      await afterAction("All entries scored. Ready to reveal.");
+      if (outcome.failed.length > 0) {
+        setError(
+          `${outcome.failed.length} entr${outcome.failed.length === 1 ? "y" : "ies"} could not be ` +
+            `queued: ${outcome.failed[0].reason}. Press Score Entries again to retry just those.`,
+        );
+      }
+      await afterAction(parts.join(" "));
     } catch (e) {
       setError(errText(e));
+      // A run that aborts part-way has still queued whatever landed before it stopped, so the
+      // Scored counter must be re-read — otherwise the panel keeps showing the pre-run figure
+      // and the operator cannot tell how much of the round is actually done.
+      await loadEntries();
     } finally {
+      setScoreProgress(null);
       setBusy(false);
     }
-  }, [operator, afterAction, roundId]);
+  }, [operator, afterAction, loadEntries, roundId]);
 
   const onFinalizeRound = useCallback(async () => {
     setBusy(true);
@@ -270,14 +299,24 @@ export function OperatorPanel({ onClose }: { onClose: () => void }) {
               title="Score Entries"
               hint={
                 unscoredN > 0
-                  ? `Queues scoring for ${unscoredN} unscored entr${unscoredN === 1 ? "y" : "ies"}. You will need to approve ${unscoredN} transaction${unscoredN === 1 ? "" : "s"}.`
+                  ? `Queues scoring for ${unscoredN} unscored entr${unscoredN === 1 ? "y" : "ies"}, ` +
+                    `batched ${SCORE_BATCH_SIZE} per transaction. You will need to approve ` +
+                    `${scoreTransactionCount(unscoredN)} transaction${scoreTransactionCount(unscoredN) === 1 ? "" : "s"}.`
                   : "All entries are scored."
               }
               hintTone="warn"
-              buttonLabel="Score Entries"
+              buttonLabel={scoreProgress ? "Scoring…" : "Score Entries"}
               disabled={busy || !isClosed || total === 0 || allScored}
               onClick={onScoreEntries}
-            />
+            >
+              {scoreProgress && (
+                <StepProgress
+                  progress={scoreProgress}
+                  ariaLabel="Scoring progress"
+                  note="Keep this panel open — each batch needs one wallet approval."
+                />
+              )}
+            </OperatorAction>
             <RevealWinnersAction
               operator={operator}
               roundId={roundId}
@@ -500,43 +539,12 @@ function RevealWinnersAction({
         </div>
       )}
 
-      {/* Live progress. Deliberately plain: a phase label, a step count and a bar. The point
-          is only to distinguish "still working" from "stuck", across a run that can take
-          several minutes of MPC. */}
       {running && (
-        <div className="mt-2.5">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="animate-pulseSoft font-body text-[11px] text-garden-cyan">
-              {progress?.label ?? "Starting…"}
-            </span>
-            {progress && progress.totalSteps > 0 && (
-              <span className="shrink-0 font-mono text-[10px] text-garden-parch/40">
-                {progress.step}/{progress.totalSteps}
-              </span>
-            )}
-          </div>
-          <div
-            className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-black/40"
-            role="progressbar"
-            aria-valuemin={0}
-            aria-valuemax={progress?.totalSteps ?? 0}
-            aria-valuenow={progress?.step ?? 0}
-            aria-label="Reveal progress"
-          >
-            <div
-              className="h-full rounded-full bg-garden-cyan transition-[width] duration-500"
-              style={{
-                width: progress && progress.totalSteps > 0
-                  ? `${Math.min(100, (progress.step / progress.totalSteps) * 100)}%`
-                  : "6%",
-              }}
-            />
-          </div>
-          <p className="mt-1 text-[10px] leading-snug text-garden-parch/40">
-            Keep this panel open — each step needs a wallet approval, and the encrypted
-            computations take a moment to come back.
-          </p>
-        </div>
+        <StepProgress
+          progress={progress}
+          ariaLabel="Reveal progress"
+          note="Keep this panel open — each step needs a wallet approval, and the encrypted computations take a moment to come back."
+        />
       )}
 
       <button
@@ -547,6 +555,59 @@ function RevealWinnersAction({
       >
         {running ? "Revealing…" : resuming ? "Resume Reveal" : "Reveal Winners"}
       </button>
+    </div>
+  );
+}
+
+/**
+ * Live progress for a multi-transaction operator run. Deliberately plain: a phase label, a
+ * step count and a bar. The point is only to distinguish "still working" from "stuck".
+ *
+ * Shared by the reveal and by scoring because both count the same unit — WALLET APPROVALS,
+ * not entries or shards — and an operator watching two different bars that mean two different
+ * things is exactly how a long run gets abandoned half way. `totalSteps` may grow mid-run
+ * (scoring widens it when a batch splits), so the bar is clamped rather than assumed monotonic.
+ */
+function StepProgress({
+  progress,
+  ariaLabel,
+  note,
+}: {
+  progress: { step: number; totalSteps: number; label: string } | null;
+  ariaLabel: string;
+  note: string;
+}) {
+  return (
+    <div className="mt-2.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="animate-pulseSoft font-body text-[11px] text-garden-cyan">
+          {progress?.label ?? "Starting…"}
+        </span>
+        {progress && progress.totalSteps > 0 && (
+          <span className="shrink-0 font-mono text-[10px] text-garden-parch/40">
+            {progress.step}/{progress.totalSteps}
+          </span>
+        )}
+      </div>
+      <div
+        className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-black/40"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={progress?.totalSteps ?? 0}
+        aria-valuenow={progress?.step ?? 0}
+        aria-label={ariaLabel}
+      >
+        <div
+          className="h-full rounded-full bg-garden-cyan transition-[width] duration-500"
+          style={{
+            width:
+              progress && progress.totalSteps > 0
+                ? `${Math.min(100, (progress.step / progress.totalSteps) * 100)}%`
+                : "6%",
+          }}
+        />
+      </div>
+      <p className="mt-1 text-[10px] leading-snug text-garden-parch/40">{note}</p>
     </div>
   );
 }

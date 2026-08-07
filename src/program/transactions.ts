@@ -54,6 +54,7 @@ import {
   type ProgressFn,
   type RevealStatus,
 } from "./reveal";
+import { runScoring, type ScoreOutcome, type ScoreProgressFn } from "./scoring";
 import { useNetworkGuard } from "../wallet/useNetworkGuard";
 import {
   PROGRAM_ID,
@@ -775,8 +776,12 @@ export interface OperatorActions {
   closeRound: (roundId: number) => Promise<string>;
   /** finalize_round — Closed -> Finalized, which is what lets the NEXT round open. */
   finalizeRound: (roundId: number) => Promise<string>;
-  /** queue_score_entry for ONE entry (separate wallet approval each). */
-  queueScoreEntry: (entryPubkey: string) => Promise<string>;
+  /**
+   * Queue scoring for every unscored entry of a round, BATCHED — five `queue_score_entry`
+   * instructions per transaction, so N entries cost ceil(N/5) wallet approvals instead of N.
+   * Resumable and self-correcting; see ./scoring for the batch size and the split-retry rule.
+   */
+  scoreEntries: (roundId: number, onProgress: ScoreProgressFn) => Promise<ScoreOutcome>;
   /**
    * Read-only: what revealing this round would involve, and how much of it the chain says is
    * already done. Called when the panel opens so an interrupted sequence can be resumed.
@@ -897,45 +902,30 @@ export function useOperatorActions(): OperatorActions {
     [program, publicKey, submit],
   );
 
-  const queueScoreEntry = useCallback(
-    async (entryPubkey: string): Promise<string> => {
-      if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
-      const entry = new PublicKey(entryPubkey);
-      // The entry carries its own round + flower_record; read them rather than trust the UI.
-      const acc = await program.account.competitionEntry.fetch(entry);
-      const offset = new BN(Array.from(randomBytes(8)));
-      const tx = await program.methods
-        .queueScoreEntry(offset)
-        .accountsPartial({
-          authority: publicKey,
-          round: acc.round,
-          entry,
-          flowerRecord: acc.flowerRecord,
-          ...arciumAccountsFor("score_entry_v2", offset),
-        })
-        .transaction();
-      return submit(tx);
-    },
-    [program, publicKey, submit],
-  );
-
-  // The bracket reveal is a multi-step sequence rather than one instruction, so it lives in
-  // its own module (./reveal). Both entry points below just bind it to the connected wallet
-  // and the same send-and-confirm choke point every other operator action uses.
-  const revealContext = useCallback(() => {
+  // Scoring and the bracket reveal are both multi-transaction sequences rather than single
+  // instructions, so each lives in its own module (./scoring, ./reveal). The entry points
+  // below just bind them to the connected wallet and the same send-and-confirm choke point
+  // every other operator action uses.
+  const sequenceContext = useCallback(() => {
     if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
     return { program, authority: publicKey, submit };
   }, [program, publicKey, submit]);
 
+  const scoreEntries = useCallback(
+    (roundId: number, onProgress: ScoreProgressFn): Promise<ScoreOutcome> =>
+      runScoring(sequenceContext(), roundId, onProgress),
+    [sequenceContext],
+  );
+
   const inspectRoundReveal = useCallback(
-    (roundId: number): Promise<RevealStatus> => inspectReveal(revealContext(), roundId),
-    [revealContext],
+    (roundId: number): Promise<RevealStatus> => inspectReveal(sequenceContext(), roundId),
+    [sequenceContext],
   );
 
   const revealWinners = useCallback(
     (roundId: number, onProgress: ProgressFn): Promise<void> =>
-      runBracketReveal(revealContext(), roundId, onProgress),
-    [revealContext],
+      runBracketReveal(sequenceContext(), roundId, onProgress),
+    [sequenceContext],
   );
 
   return useMemo(
@@ -944,7 +934,7 @@ export function useOperatorActions(): OperatorActions {
       openRound,
       closeRound,
       finalizeRound,
-      queueScoreEntry,
+      scoreEntries,
       inspectReveal: inspectRoundReveal,
       revealWinners,
       fetchRoundEntries,
@@ -954,7 +944,7 @@ export function useOperatorActions(): OperatorActions {
       openRound,
       closeRound,
       finalizeRound,
-      queueScoreEntry,
+      scoreEntries,
       inspectRoundReveal,
       revealWinners,
       fetchRoundEntries,

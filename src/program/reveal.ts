@@ -31,7 +31,7 @@
  * and the MPC calls run concurrently, instead of waiting ~40s per shard in series.
  */
 import { BN } from "@anchor-lang/core";
-import { PublicKey, type Transaction } from "@solana/web3.js";
+import { ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
 import type { SecretGardenProgram } from "./client";
 import { TxError } from "./errors";
 import { arciumAccountsFor } from "./arcium";
@@ -81,6 +81,36 @@ const RESULT_TIMEOUT_MS = 420_000;
 const RESUME_GRACE_MS = 90_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Explicit compute ceiling for a reveal queue, replacing an implicit default that is too close
+ * for comfort.
+ *
+ * Solana grants 200,000 CU per instruction when a transaction carries no ComputeBudget
+ * instruction, and every reveal queue below is a single-instruction transaction — so they have
+ * all been running against a 200,000 ceiling. A 13-entry `queue_shard_reveal` was measured at
+ * 158,914 CU on devnet (5 samples, 146k-159k). That is 20% headroom on a path where running
+ * out means a failed approval mid-reveal, and it shrinks as MAX_SHARD_SIZE-worth of entry
+ * accounts get more expensive to load.
+ *
+ * 250,000 restores a ~57% margin over the measured worst case. It costs ~40 bytes (the
+ * ComputeBudget program key plus the instruction), which these transactions can afford: the
+ * largest of them, a 13-entry shard queue, goes from 1111 to 1151 bytes against the 1232-byte
+ * limit. (The scoring batches in ./scoring deliberately do NOT carry one — there the same 40
+ * bytes is exactly what does not fit.)
+ *
+ * Requesting a limit does not spend it: unused CU is not charged, and no compute-unit PRICE is
+ * set anywhere in this app, so there is no priority fee to inflate.
+ */
+export const REVEAL_CU_LIMIT = 250_000;
+
+/** `tx` with an explicit compute-unit ceiling prepended. Does not mutate the input.
+ *  Exported so scripts/verify-score-batching.mjs can size the REAL transaction. */
+export function withComputeUnitLimit(tx: Transaction, units: number): Transaction {
+  const out = new Transaction().add(ComputeBudgetProgram.setComputeUnitLimit({ units }));
+  tx.instructions.forEach((ix) => out.add(ix));
+  return out;
+}
 
 /** Crypto-strong random bytes in the browser (no node `crypto`). */
 function randomBytes(n: number): Uint8Array {
@@ -576,18 +606,21 @@ export async function runBracketReveal(
       progress.say(`Final reveal over ${finalists.length} finalists… (approve in wallet)`);
       const offset = freshOffset();
       await submit(
-        await program.methods
-          .queueShardReveal(offset, FINAL_SHARD_INDEX)
-          .accountsPartial({
-            authority,
-            config,
-            round,
-            bracket,
-            result: finalResult,
-            ...arciumAccountsFor("reveal_top3_v3", offset),
-          })
-          .remainingAccounts(metas(finalists))
-          .transaction(),
+        withComputeUnitLimit(
+          await program.methods
+            .queueShardReveal(offset, FINAL_SHARD_INDEX)
+            .accountsPartial({
+              authority,
+              config,
+              round,
+              bracket,
+              result: finalResult,
+              ...arciumAccountsFor("reveal_top3_v3", offset),
+            })
+            .remainingAccounts(metas(finalists))
+            .transaction(),
+          REVEAL_CU_LIMIT,
+        ),
       );
       progress.signed("Final reveal queued.");
     }
@@ -655,18 +688,21 @@ async function runSingleTier(
       queue: async (k) => {
         const offset = freshOffset();
         await submit(
-          await program.methods
-            .queueShardReveal(offset, k)
-            .accountsPartial({
-              authority,
-              config,
-              round,
-              bracket,
-              result: shardResultPda(round, k),
-              ...arciumAccountsFor("reveal_top3_v3", offset),
-            })
-            .remainingAccounts(metas(plan.shards[k].entries))
-            .transaction(),
+          withComputeUnitLimit(
+            await program.methods
+              .queueShardReveal(offset, k)
+              .accountsPartial({
+                authority,
+                config,
+                round,
+                bracket,
+                result: shardResultPda(round, k),
+                ...arciumAccountsFor("reveal_top3_v3", offset),
+              })
+              .remainingAccounts(metas(plan.shards[k].entries))
+              .transaction(),
+            REVEAL_CU_LIMIT,
+          ),
         );
       },
       collected: async (k) => {
@@ -748,18 +784,21 @@ async function runTwoTier(
         queue: async (k) => {
           const offset = freshOffset();
           await submit(
-            await program.methods
-              .queueTier1ShardReveal(offset, k)
-              .accountsPartial({
-                authority,
-                config,
-                round,
-                tier1,
-                result: shardResultPda(round, k),
-                ...arciumAccountsFor("reveal_top3_v3", offset),
-              })
-              .remainingAccounts(metas(plan.shards[k].entries))
-              .transaction(),
+            withComputeUnitLimit(
+              await program.methods
+                .queueTier1ShardReveal(offset, k)
+                .accountsPartial({
+                  authority,
+                  config,
+                  round,
+                  tier1,
+                  result: shardResultPda(round, k),
+                  ...arciumAccountsFor("reveal_top3_v3", offset),
+                })
+                .remainingAccounts(metas(plan.shards[k].entries))
+                .transaction(),
+              REVEAL_CU_LIMIT,
+            ),
           );
         },
         collected: async (k) => {
@@ -816,19 +855,22 @@ async function runTwoTier(
       queue: async (k) => {
         const offset = freshOffset();
         await submit(
-          await program.methods
-            .queueSemifinalReveal(offset, k)
-            .accountsPartial({
-              authority,
-              config,
-              round,
-              tier1,
-              bracket,
-              result: semiResultPda(round, k),
-              ...arciumAccountsFor("reveal_top3_v3", offset),
-            })
-            .remainingAccounts(metas(sliceFor(k)))
-            .transaction(),
+          withComputeUnitLimit(
+            await program.methods
+              .queueSemifinalReveal(offset, k)
+              .accountsPartial({
+                authority,
+                config,
+                round,
+                tier1,
+                bracket,
+                result: semiResultPda(round, k),
+                ...arciumAccountsFor("reveal_top3_v3", offset),
+              })
+              .remainingAccounts(metas(sliceFor(k)))
+              .transaction(),
+            REVEAL_CU_LIMIT,
+          ),
         );
       },
       collected: async (k) => {
