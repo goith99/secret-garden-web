@@ -14,14 +14,18 @@ const COLLECTION_FULL_MSG = "Your collection is full. Release a flower to make r
 /**
  * The Hybrid Pot — the focal point AND the crossbreed action (Stage 6D). Clicking the pot
  * drives the breeding state machine, EXCEPT at BloomReady: there the new flower is shown
- * growing inside the pot and the player chooses what to do with it via two buttons below.
+ * growing inside the pot and a single "Save to Collection" button below banks it.
+ *
+ * Entering a challenge is deliberately NOT offered here. It happens later, from the saved
+ * flower's card in the collection (FlowerCard's "Submit to Challenge"), where the round rules
+ * — one entry per wallet per round, "Check Match" first — are already surfaced per flower.
  *
  * States:
  *   - both pots empty        → "SEEDBED" / "AWAITING A CROSS"        (inert)
  *   - one pot filled         → "SEEDBED" / "SELECT ANOTHER FLOWER"   (inert)
  *   - both filled, idle      → "CROSSBREED" ✦, gold glow + pulse     (click → startCrossbreed)
  *   - confirming / growing   → "GROWING…", rotating sparkle + glow   (inert)
- *   - bloom ready            → 🌸 the new bloom + Submit / Save buttons (buttons drive it)
+ *   - bloom ready            → 🌸 the new bloom + a "Save to Collection" button
  *   - bloom failed           → 🥀 "BLOOM FAILED" / "TRY AGAIN"        (click → resetAfterFailure)
  */
 
@@ -50,11 +54,8 @@ export function HybridPot() {
     potB,
     startCrossbreed,
     collectBloom,
-    submitBloom,
     resetAfterFailure,
     newBloom,
-    roundOpen,
-    hasEnteredCurrentRound,
     breedsRemaining,
     breedNotice,
     dropBlockedNotice,
@@ -75,6 +76,8 @@ export function HybridPot() {
   const bloomed = phase === "BloomReady";
   const failed = phase === "Failed";
   const oneFilled = (potA === null) !== (potB === null); // exactly one pot has a flower
+  // A challenge submit is in flight for some flower on the shelf. Save waits it out rather than
+  // racing a second wallet prompt against it.
   const submitting = submittingId !== null;
   const exhausted = breedsRemaining <= 0; // per-round breed cap spent (connected/real mode)
   // All 20 hybrid slots taken — the program would reject the cross, so the pot never arms.
@@ -285,33 +288,11 @@ export function HybridPot() {
         </p>
       )}
 
-      {/* BloomReady actions — Submit (if a round is open) + Save. Player vocabulary only. */}
+      {/* BloomReady action — Save, and only Save. Entering a challenge is a separate, later
+          decision the player makes from the saved flower's own card (FlowerCard's "Submit to
+          Challenge"), so the bloom moment stays one unambiguous step. */}
       {bloomed && (
         <div className="flex w-full max-w-[15rem] flex-col items-center gap-2">
-          {roundOpen && hasEnteredCurrentRound ? (
-            // Already entered a flower this round (one entry per wallet per round) — let the
-            // player keep this bloom; submitting would be rejected on-chain.
-            <p className="text-center font-pixel text-[9px] uppercase tracking-wide text-garden-parch/50">
-              Already entered this round
-            </p>
-          ) : roundOpen ? (
-            <button
-              type="button"
-              onClick={submitBloom}
-              disabled={submitting}
-              className={`w-full rounded-md border px-3 py-1.5 font-pixel text-[10px] uppercase tracking-wide transition
-                focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan
-                ${submitting
-                  ? "cursor-not-allowed border-garden-moss/50 bg-garden-deep/60 text-garden-parch/40"
-                  : "border-garden-gold bg-garden-gold/20 text-garden-gold hover:bg-garden-gold/35"}`}
-            >
-              {submitting ? "…" : "Submit to Challenge"}
-            </button>
-          ) : (
-            <p className="font-pixel text-[9px] uppercase tracking-wide text-garden-parch/50">
-              No open challenge right now
-            </p>
-          )}
           <button
             type="button"
             onClick={collectBloom}

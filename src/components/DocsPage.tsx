@@ -181,7 +181,7 @@ export function DocsPage() {
                 <>Adjust <strong className="text-garden-cream">Greenhouse Controls</strong> (Light, Water, Soil) to influence the cross</>,
                 <>Confirm the transaction in your wallet</>,
                 <>Wait for the cross to complete (a few seconds, powered by Arcium MPC)</>,
-                <>Your new hybrid flower appears — choose to <strong className="text-garden-cream">Save to Collection</strong> or <strong className="text-garden-cream">Submit to Challenge</strong></>,
+                <>Your new hybrid flower appears — <strong className="text-garden-cream">Save to Collection</strong> to keep it (you can enter it in a challenge later, from your collection)</>,
               ]}
               note={<>You get <strong>5 breeding attempts</strong> per round.</>}
             />
@@ -195,7 +195,7 @@ export function DocsPage() {
               steps={[
                 <>Check <strong className="text-garden-cream">Today&apos;s Request</strong> — see which traits judges are looking for</>,
                 <>Breed a flower matching as many wanted traits as possible</>,
-                <>Click <strong className="text-garden-cream">SUBMIT TO CHALLENGE</strong> on your best hybrid</>,
+                <>In your collection, click <strong className="text-garden-cream">SUBMIT TO CHALLENGE</strong> on your best saved hybrid</>,
                 <>Only one entry per wallet per round</>,
                 <>Winners are revealed after the round closes</>,
               ]}

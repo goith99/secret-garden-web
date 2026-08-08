@@ -33,11 +33,11 @@ export function Greenhouse() {
   return (
     // Desktop (lg+, matching App's 1024px layout switch) keeps the no-page-scroll contract:
     // h-full, and the scene shrinks so the controls strip is always visible. Mobile CANNOT
-    // honour that — a phone has no room for the pot row PLUS the BloomReady actions — so there
+    // honour that — a phone has no room for the pot row PLUS the BloomReady action — so there
     // the column takes AT LEAST the viewport and is free to grow past it, letting MobileLayout's
-    // already-scrollable <main> carry the overflow. Without this the BloomReady buttons
-    // ("Submit to Challenge" / "Save to Collection") were laid out below the fold of a clipped,
-    // unscrollable box and could not be reached at all.
+    // already-scrollable <main> carry the overflow. Without this the BloomReady button
+    // ("Save to Collection") was laid out below the fold of a clipped, unscrollable box and
+    // could not be reached at all.
     <div className="flex min-h-full flex-col gap-2 lg:h-full lg:min-h-0">
       {/* The night garden: animated scene + planted starters + floating pots. A small min-h
           keeps the scene readable, but flex-1 lets it shrink so the controls strip below

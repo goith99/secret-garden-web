@@ -195,10 +195,8 @@ interface GameContextValue {
   clearPot: (pot: PotId) => void;
   setEnvironment: (kind: EnvironmentKind, optionIndex: number) => void;
   startCrossbreed: () => void;
-  /** "SAVE TO COLLECTION" — keep the new bloom without entering it, then refresh the garden. */
+  /** "SAVE TO COLLECTION" — the only post-breed action; banks the bloom, then refreshes. */
   collectBloom: () => void;
-  /** "SUBMIT TO CHALLENGE" — enter the new bloom in the open round, then save + refresh. */
-  submitBloom: () => void;
   resetAfterFailure: () => void;
   /** Whether a flower may be entered into the active round right now (GO enabled). */
   canSubmit: (flower: Flower) => boolean;
@@ -594,68 +592,41 @@ export function GameProvider({
     })();
   }, [onRefetch]);
 
-  // Standalone/demo collect: move the mock bloom onto the shelf (+ journal entry). When
-  // `submitted` is set it lands already entered in the challenge.
-  const mockCollect = useCallback(
-    (submitted: boolean) => {
-      if (!newBloom || !potA || !potB) return;
-      const bloom = submitted ? { ...newBloom, status: FlowerStatus.Submitted } : newBloom;
-      const entry: JournalEntry = {
-        id: `exp-${bloom.flowerIndex}`,
-        createdAt: bloom.createdAt,
-        parentASpecies: potA.visualSpeciesId,
-        parentBSpecies: potB.visualSpeciesId,
-        status: ExperimentStatus.Completed,
-        result: {
-          species: bloom.visualSpeciesId,
-          generation: bloom.generation,
-          rarity: bloom.rarity,
-        },
-      };
-      setShelf((s) => [bloom, ...s]);
-      setJournal((j) => [entry, ...j]);
-      setPotA(null);
-      setPotB(null);
-      setActivePhase(null);
-      setNewBloom(null);
-    },
-    [newBloom, potA, potB],
-  );
+  // Standalone/demo collect: move the mock bloom onto the shelf (+ journal entry). It always
+  // lands Active — a saved bloom is entered in a challenge later, from its card.
+  const mockCollect = useCallback(() => {
+    const bloom = newBloom;
+    if (!bloom || !potA || !potB) return;
+    const entry: JournalEntry = {
+      id: `exp-${bloom.flowerIndex}`,
+      createdAt: bloom.createdAt,
+      parentASpecies: potA.visualSpeciesId,
+      parentBSpecies: potB.visualSpeciesId,
+      status: ExperimentStatus.Completed,
+      result: {
+        species: bloom.visualSpeciesId,
+        generation: bloom.generation,
+        rarity: bloom.rarity,
+      },
+    };
+    setShelf((s) => [bloom, ...s]);
+    setJournal((j) => [entry, ...j]);
+    setPotA(null);
+    setPotB(null);
+    setActivePhase(null);
+    setNewBloom(null);
+  }, [newBloom, potA, potB]);
 
-  // "SAVE TO COLLECTION" — keep the bloom without entering it.
+  // "SAVE TO COLLECTION" — the one and only thing a fresh bloom does.
   const collectBloom = useCallback(() => {
     if (activePhase !== "BloomReady") return;
     if (onRefetch) resetAndRefetch();
-    else mockCollect(false);
+    else mockCollect();
   }, [activePhase, onRefetch, resetAndRefetch, mockCollect]);
 
-  // "SUBMIT TO CHALLENGE" — enter the bloom in the open round, then save + refresh.
-  const submitBloom = useCallback(() => {
-    if (activePhase !== "BloomReady" || !newBloom) return;
-    if (!onRefetch) {
-      mockCollect(true);
-      return;
-    }
-    const bloom = newBloom;
-    setSubmittingId(bloom.id);
-    void (async () => {
-      try {
-        await actions.submitEntry({ roundId: challenge.roundId, flowerRecord: bloom.id });
-        if (!mounted.current) return;
-        resetAndRefetch(); // entered on-chain; now save + refresh as usual
-      } catch (e) {
-        // Stay at BloomReady so the player can retry or save. A decline is not a failure — say
-        // plainly that nothing happened; only a real failure gets the warning toast.
-        if (e instanceof TxError && e.kind === "rejected") {
-          toast.info("Transaction cancelled. Your bloom is still here.");
-        } else {
-          toast.error("Couldn't submit to challenge. Try again.");
-        }
-      } finally {
-        if (mounted.current) setSubmittingId(null);
-      }
-    })();
-  }, [activePhase, newBloom, onRefetch, actions, challenge.roundId, resetAndRefetch, mockCollect, toast]);
+  // NOTE: there is deliberately no "submit the bloom straight from the pot" action. A fresh
+  // bloom is only ever saved; entering it in a round happens afterwards from its card on the
+  // shelf, through `submitFlower` below — one submit path, not two.
 
   const resetAfterFailure = useCallback(() => {
     clearTimers();
@@ -854,7 +825,6 @@ export function GameProvider({
       setEnvironment,
       startCrossbreed,
       collectBloom,
-      submitBloom,
       resetAfterFailure,
       canSubmit,
       submitFlower,
@@ -881,7 +851,7 @@ export function GameProvider({
       newBloom, roundOpen, hasEnteredCurrentRound, isEnteredInCurrentRound, breedsRemaining, breedError, breedNotice, dropBlockedNotice, journal, challenge, winners, activeTab, submittingId,
       bloomToast, authority, profileNeedsMigration, migrating, migrateError, migrateProfile, refetchGarden,
       selectFlower, placeInPot, autoPlace, clearPot,
-      setEnvironment, startCrossbreed, collectBloom, submitBloom, resetAfterFailure, canSubmit,
+      setEnvironment, startCrossbreed, collectBloom, resetAfterFailure, canSubmit,
       submitFlower, retryRefresh, simulateFailure,
     ],
   );
