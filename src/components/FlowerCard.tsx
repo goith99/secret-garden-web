@@ -54,6 +54,12 @@ export function FlowerCard({
     releaseFlower,
     releasingId,
     releaseNotice,
+    isBreedLocked,
+    releasableRoundOf,
+    canBringBack,
+    bringBackFlower,
+    bringingBackId,
+    bringBackNotice,
   } = useGame();
   const r = rarityStyle(flower.rarity);
   // First click arms the release, second within ARM_MS sends it — a deliberate second step
@@ -61,22 +67,28 @@ export function FlowerCard({
   const [armed, setArmed] = useState(false);
 
   // NOTE: `submitted` means "was entered in SOME round, at some point" — NOT "is in the live
-  // round". `submit_entry` writes FLOWER_STATUS_SUBMITTED once and NO instruction ever writes it
-  // back (close_round / finalize_round don't even take FlowerRecord accounts), so this flag never
-  // expires. It still gates the submit/release controls, because those are genuinely blocked
-  // on-chain by `status == FLOWER_STATUS_ACTIVE` — that's a program-level gap tracked separately.
+  // round". `submit_entry` writes FLOWER_STATUS_SUBMITTED once and no ROUND instruction ever
+  // writes it back, so this flag does not expire on its own; `release_flower` is the one thing
+  // that clears it, and only once the flower's round is Finalized.
   const submitted = flower.status === FlowerStatus.Submitted;
   // The player already entered THIS round (one entry per round) — every other flower's submit
   // is locked out until the next round opens. `roundOpen` keeps this quiet between rounds.
   const enteredAnother = hasEnteredCurrentRound && roundOpen && !submitted;
-  // BREED lock — scoped to the live round via the round's own CompetitionEntry, not the flower's
-  // permanent status flag. This used to be `submitted && roundOpen`, which was wrong twice over:
-  // `submitted` never expires, and `roundOpen` asks about the CURRENT round while knowing nothing
-  // about which round the flower entered — so every flower ever submitted was re-locked the
-  // moment any later round opened, forever. Breeding is NOT blocked on-chain for these flowers
-  // (StartBreeding rejects only `status == LOCKED`, lib.rs:2290/2297), so this lock is the UI's
-  // own — and it must end when the flower's round does.
-  const locked = isEnteredInCurrentRound(flower);
+  // BREED lock. `start_breeding` requires `status == ACTIVE` on both parents, so every Submitted
+  // flower is locked — the live round's AND a finished round's. (The previous rule locked only
+  // the live round's entry, which was right when the program rejected just `status == LOCKED`;
+  // the parent guards have since been tightened, and a past-round flower dropped into a pot now
+  // fails simulation with FlowerNotActive.) A finished round's flower is one click from usable —
+  // see "Bring Back" below.
+  const locked = isBreedLocked(flower);
+  // Which of the two lockings this is, purely for wording: the live round means "wait", a
+  // finished round means "bring it back".
+  const inLiveRound = isEnteredInCurrentRound(flower);
+  // The finished round this flower can be pulled out of, or null. Non-null is exactly the
+  // condition for offering Bring Back: round Finalized, entry unspent, own hybrid, Submitted.
+  const releasableRound = releasableRoundOf(flower);
+  const bringingBack = bringingBackId === flower.id;
+  const bringBackEnabled = canBringBack(flower);
   const submitting = submittingId === flower.id;
   const goEnabled = canSubmit(flower);
 
@@ -138,6 +150,13 @@ export function FlowerCard({
   const onGo = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation(); // don't also trigger the card's select/place
     submitFlower(flower);
+  };
+
+  // No arming step here, unlike Release: bringing a flower back is not destructive — it is
+  // the undo for having entered it. The only cost is a signature.
+  const onBringBack = (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation(); // don't also trigger the card's select/place
+    bringBackFlower(flower);
   };
 
   return (
@@ -231,18 +250,61 @@ export function FlowerCard({
             <span
               className="rounded-md border border-garden-gold/70 bg-garden-deep/80 px-2 py-1 text-center font-pixel text-[9px] uppercase leading-tight tracking-wide text-garden-gold"
               title={
-                locked
+                inLiveRound
                   ? "Entered in the current challenge round"
                   : "Entered in a past challenge round"
               }
             >
-              {locked ? "Entered this round" : "Entered"}
+              {inLiveRound ? "Entered this round" : "Entered"}
             </span>
-            {locked && (
+            {inLiveRound && (
               <span className="px-1 text-center font-body text-[9px] leading-tight text-garden-parch/50">
                 Breeding resumes when this round ends
               </span>
             )}
+            {/* The round this flower competed in is over, so the chain will now hand it back.
+                Deliberately NOT offered while that round is still Open or Closed: release_flower
+                rejects those (RoundNotFinalized), and the "Entered, locked" state above is the
+                honest thing to show until judging is done. */}
+            {releasableRound !== null && (
+              <>
+                <button
+                  type="button"
+                  onClick={onBringBack}
+                  disabled={!bringBackEnabled || bringingBack}
+                  title={
+                    bringingBack
+                      ? "Bringing this flower back…"
+                      : bringBackEnabled
+                        ? `Challenge #${releasableRound} is over — return this flower to your collection`
+                        : "Bringing another flower back — one at a time"
+                  }
+                  className={`w-full rounded-md border px-2 py-1 font-pixel text-[9px] uppercase tracking-wide transition
+                    focus:outline-none focus-visible:ring-2 focus-visible:ring-garden-cyan
+                    ${bringBackEnabled && !bringingBack
+                      ? "border-garden-mint bg-garden-mint/20 text-garden-mint hover:bg-garden-mint/35"
+                      : "cursor-not-allowed border-garden-moss/50 bg-garden-deep/60 text-garden-parch/40"}`}
+                >
+                  {bringingBack ? "Bringing back…" : "Bring Back"}
+                </button>
+                {!bringingBack && (
+                  <span className="px-1 text-center font-body text-[9px] leading-tight text-garden-parch/50">
+                    Challenge #{releasableRound} is over
+                  </span>
+                )}
+                {/* Carries its own flower id, so a declined signature notes itself on the card
+                    the player actually clicked. */}
+                {bringBackNotice?.flowerId === flower.id && (
+                  <span className="px-1 text-center font-body text-[9px] leading-tight text-garden-parch/50">
+                    {bringBackNotice.message}
+                  </span>
+                )}
+              </>
+            )}
+            {/* Submitted with no releasable round means its round is still Open or Closed
+                (judging): release_flower would be rejected with RoundNotFinalized, so nothing
+                is offered and the "Entered, locked" state above stands — which is the current,
+                correct behaviour for a live round. */}
           </>
         ) : (
           <>

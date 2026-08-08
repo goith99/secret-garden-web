@@ -35,7 +35,7 @@ function GameView() {
  */
 function GardenApp() {
   const { connected } = useGardener();
-  const { flowers, journal, activeRound, playerProfile, gameConfig, loading, error, refetch, hasEnteredCurrentRound, currentRoundEntryFlowerId, profileNeedsMigration } =
+  const { flowers, journal, activeRound, playerProfile, gameConfig, loading, error, refetch, hasEnteredCurrentRound, currentRoundEntryFlowerId, releasableEntries, profileNeedsMigration } =
     useGardenData();
 
   // NOTE: a pre-5D (68-byte) profile is read safely (fetchPlayerProfile decodes the old layout
@@ -79,6 +79,7 @@ function GardenApp() {
           lastBreedRound: playerProfile.lastBreedRound,
           hasEnteredCurrentRound,
           currentRoundEntryFlowerId,
+          releasableEntries,
           profileNeedsMigration,
           totalFlowers: playerProfile.totalFlowers,
         }

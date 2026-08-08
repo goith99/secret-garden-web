@@ -32,6 +32,18 @@ export const RoundStatus = {
 } as const;
 export type RoundStatusCode = (typeof RoundStatus)[keyof typeof RoundStatus];
 
+/**
+ * CompetitionEntry.status. Written once by submit_entry and, since release_flower shipped,
+ * flipped to Released when the entry is spent to pull its flower back out (ENTRY_STATUS_*).
+ * The flip is what makes release ONE-SHOT per entry: a finalized entry stays valid forever,
+ * so without it an old entry could be replayed against a later, still-live round.
+ */
+export const EntryStatus = {
+  Submitted: 0, // ENTRY_STATUS_SUBMITTED — the flower can still be released
+  Released: 1, // ENTRY_STATUS_RELEASED — already spent; release_flower refuses it
+} as const;
+export type EntryStatusCode = (typeof EntryStatus)[keyof typeof EntryStatus];
+
 export const ExperimentStatus = {
   Queued: 0,
   Failed: 1,

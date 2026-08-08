@@ -40,6 +40,7 @@ import {
 import { PublicKey } from "@solana/web3.js";
 import { MOCK_FLOWERS, MOCK_JOURNAL, MOCK_CHALLENGE, MOCK_WINNERS } from "../mocks/data";
 import { useGardenActions, TxError } from "../program/transactions";
+import type { ReleasableEntry } from "../program/accounts";
 import { usePrivateHint, type HintNotice, type HintView } from "../hooks/usePrivateHint";
 import { useGardener } from "../wallet/useGardener";
 import { useToast } from "../components/Toast";
@@ -90,9 +91,15 @@ export interface GardenInitial {
   hasEnteredCurrentRound?: boolean;
   /**
    * The FlowerRecord id this wallet entered in the CURRENTLY OPEN round, or null. Scopes the
-   * breeding lock to the live round — see useGardenData.currentRoundEntryFlowerId.
+   * "Entered this round" wording to the live round — see useGardenData.currentRoundEntryFlowerId.
    */
   currentRoundEntryFlowerId?: string | null;
+  /**
+   * Flowers this wallet can bring back out of a FINISHED round, keyed by FlowerRecord id, with
+   * the round each one competed in (release_flower needs that round). See
+   * useGardenData.releasableEntries.
+   */
+  releasableEntries?: Map<string, ReleasableEntry>;
   /** True when the connected wallet's profile is pre-5D and must be migrated before breed/submit. */
   profileNeedsMigration?: boolean;
   /**
@@ -117,6 +124,9 @@ export const FLOWER_COLLECTION_CAP = 20;
  */
 export const STARTER_COUNT = 6;
 
+/** Shared empty map so a provider without on-chain data keeps a stable dependency identity. */
+const NO_RELEASABLE_ENTRIES: Map<string, ReleasableEntry> = new Map();
+
 interface GameContextValue {
   shelf: Flower[];
   potA: Flower | null;
@@ -137,12 +147,33 @@ interface GameContextValue {
    */
   hasEnteredCurrentRound: boolean;
   /**
-   * True for the ONE flower this wallet has entered in the currently open round — the only
-   * flower that is actually breed-locked right now. False for a flower entered in a PAST round:
-   * that flower's `status` is still Submitted (nothing on-chain clears it), but the program
-   * lets it breed, so the UI must not.
+   * True for the ONE flower this wallet has entered in the currently open round.
+   *
+   * This no longer decides breeding — `isBreedLocked` does, because the program now refuses ANY
+   * Submitted parent. What it still decides is WORDING and what to offer: this flower's round is
+   * unfinished, so it reads "Entered this round / breeding resumes when this round ends" and gets
+   * no Bring Back button (release_flower would reject it with RoundNotFinalized). A flower from a
+   * PAST round reads plain "Entered" and is one signature from usable again.
    */
   isEnteredInCurrentRound: (flower: Flower) => boolean;
+  /**
+   * True when this flower cannot be bred right now. Unlike isEnteredInCurrentRound this is NOT
+   * a UI courtesy — `start_breeding` requires `status == ACTIVE` on both parents, so a Submitted
+   * flower (live round OR a past one) is rejected on-chain with FlowerNotActive. Bringing it
+   * back with release_flower is what clears this.
+   */
+  isBreedLocked: (flower: Flower) => boolean;
+  // ---- bringing a flower back from a finished round (release_flower) -------------------
+  /** The finished round this flower can be brought back from, or null when it can't be. */
+  releasableRoundOf: (flower: Flower) => number | null;
+  /** Whether "Bring Back" should be enabled for this flower right now. */
+  canBringBack: (flower: Flower) => boolean;
+  /** Bring a Submitted flower back to the collection, then refetch. */
+  bringBackFlower: (flower: Flower) => void;
+  /** The flower currently being brought back (spinner/disable on its card), or null. */
+  bringingBackId: string | null;
+  /** Transient "Bring back cancelled." note, scoped to the card that raised it. */
+  bringBackNotice: { flowerId: string; message: string } | null;
   /** How many crosses the player can still start this round (5 when standalone/no profile). */
   breedsRemaining: number;
   // ---- hybrid collection cap (starters excluded, mirroring the on-chain accounting) ----
@@ -265,6 +296,19 @@ export function GameProvider({
   const [releaseNotice, setReleaseNotice] = useState<{ flowerId: string; message: string } | null>(
     null,
   );
+  const [bringingBackId, setBringingBackId] = useState<string | null>(null);
+  const [bringBackNotice, setBringBackNotice] = useState<{
+    flowerId: string;
+    message: string;
+  } | null>(null);
+  /**
+   * Flowers this session just brought back, held only until the refetch reports them Active.
+   * Same job as `justEnteredFlowerId` on the submit path: it closes the window between
+   * "release_flower confirmed" and "the chain has been read back", during which the shelf
+   * would otherwise be overwritten with the stale Submitted record and the card would snap
+   * back to "Entered" with its Breed/Release controls gone again.
+   */
+  const [justReleasedIds, setJustReleasedIds] = useState<ReadonlySet<string>>(new Set());
   const [bloomToast, setBloomToast] = useState<string | null>(null);
   const [migrating, setMigrating] = useState(false);
   const [migrateError, setMigrateError] = useState<string | null>(null);
@@ -282,6 +326,8 @@ export function GameProvider({
   // One entry per wallet per round on-chain — once entered, every Submit control is disabled.
   const hasEnteredCurrentRound = initial?.hasEnteredCurrentRound ?? false;
   const currentRoundEntryFlowerId = initial?.currentRoundEntryFlowerId ?? null;
+  // Stable identity when absent (standalone/demo), so the callbacks below don't rebuild every render.
+  const releasableEntries = initial?.releasableEntries ?? NO_RELEASABLE_ENTRIES;
   const authority = initial?.authority ?? null;
 
   /**
@@ -324,6 +370,25 @@ export function GameProvider({
       return entered !== null && flower.id === entered;
     },
     [roundOpen, onRefetch, currentRoundEntryFlowerId, justEnteredFlowerId],
+  );
+
+  /**
+   * Can this flower go into a pot at all?
+   *
+   * This is the REAL breeding gate, and it is no longer the same question as
+   * isEnteredInCurrentRound. `start_breeding` used to reject only `status != LOCKED`, which
+   * admitted a Submitted parent — and since breed_callback writes both parents back to ACTIVE,
+   * breeding laundered a Submitted flower into an Active one and bypassed the round gate
+   * entirely. The program now requires `status == ACTIVE` on both parents (lib.rs:2349/2357),
+   * so ANY Submitted flower — this round's or a long-finished round's — fails with
+   * FlowerNotActive at simulation time. release_flower is the intended way out, which is why
+   * the card offers "Bring Back" instead of a breed button it knows would fail.
+   *
+   * Standalone/demo mode has no chain to disagree with, so it uses the same rule.
+   */
+  const isBreedLocked = useCallback(
+    (flower: Flower): boolean => flower.status === FlowerStatus.Submitted,
+    [],
   );
 
   // Breeds remaining this round. The on-chain counter is stale once the round advances:
@@ -369,10 +434,38 @@ export function GameProvider({
   useEffect(() => {
     // External (chain) data flowing into local state — see useGardenData for the same pattern.
     /* eslint-disable react-hooks/set-state-in-effect */
-    if (realFlowers) setShelf(realFlowers);
+    if (realFlowers) {
+      // Re-apply the optimistic bring-back over freshly-fetched records. release_flower has
+      // already confirmed for these, so a refetch that still reads Submitted is only RPC lag;
+      // showing them Active here is what keeps the card from flickering back to "Entered".
+      setShelf(
+        justReleasedIds.size === 0
+          ? realFlowers
+          : realFlowers.map((f) =>
+              justReleasedIds.has(f.id) && f.status === FlowerStatus.Submitted
+                ? { ...f, status: FlowerStatus.Active }
+                : f,
+            ),
+      );
+      // Drop each optimistic id the moment the chain agrees (or the flower is gone), so the
+      // override can never outlive the transaction that earned it.
+      if (justReleasedIds.size > 0) {
+        const settled = [...justReleasedIds].filter((id) => {
+          const f = realFlowers.find((x) => x.id === id);
+          return !f || f.status !== FlowerStatus.Submitted;
+        });
+        if (settled.length > 0) {
+          setJustReleasedIds((prev) => {
+            const next = new Set(prev);
+            settled.forEach((id) => next.delete(id));
+            return next;
+          });
+        }
+      }
+    }
     if (realJournal) setJournal(realJournal);
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [realFlowers, realJournal]);
+  }, [realFlowers, realJournal, justReleasedIds]);
 
   const timers = useRef<number[]>([]);
   const nextIndex = useRef<number>(10); // continues the mock flowerIndex sequence
@@ -410,6 +503,9 @@ export function GameProvider({
     setBreedNotice(null); // clear the transient "cancelled" note
     setDropBlockedNotice(null); // clear the transient "in the challenge" note
     setMigrateError(null); // clear any update-notice error
+    // Optimistic bring-backs belong to the wallet that signed them; a leftover id must never
+    // show ANOTHER wallet's flower as Active (the same rule justEnteredFlowerId follows).
+    setJustReleasedIds(new Set());
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [address, connected]);
 
@@ -424,15 +520,18 @@ export function GameProvider({
 
   const placeInPot = useCallback(
     (pot: PotId, flower: Flower) => {
-      // The flower entered in the CURRENTLY OPEN round is held back from breeding: breeding
-      // locks its parents mid-cross and the round still has to score it. Note this is a
-      // deliberate UI choice, NOT a program constraint — StartBreeding only rejects
-      // `status == LOCKED` (lib.rs:2290/2297), so the program would happily accept it.
-      // A flower entered in a PAST round is NOT held back, even though its status is still
-      // Submitted forever: that round is done with it. The card blocks drag/tap up front;
-      // this guards any path that slips through (e.g. a stray drop).
-      if (isEnteredInCurrentRound(flower)) {
-        setDropBlockedNotice("This flower is in the current challenge");
+      // A Submitted flower is held back from breeding — and this is now the PROGRAM's rule,
+      // not the UI's preference: start_breeding requires `status == ACTIVE` on both parents
+      // (lib.rs:2349/2357), so a Submitted parent fails simulation with FlowerNotActive. That
+      // is true of a past round's flower too, which is why the note distinguishes the two: the
+      // live round's flower has to wait, a finished round's flower just needs Bring Back.
+      // The card blocks drag/tap up front; this guards any path that slips through.
+      if (isBreedLocked(flower)) {
+        setDropBlockedNotice(
+          isEnteredInCurrentRound(flower)
+            ? "This flower is in the current challenge"
+            : "Bring this flower back first",
+        );
         return;
       }
       // A flower can't occupy both pots; if it's in the other pot, vacate that one.
@@ -445,7 +544,7 @@ export function GameProvider({
       }
       setSelectedFlowerId(null);
     },
-    [isEnteredInCurrentRound],
+    [isBreedLocked, isEnteredInCurrentRound],
   );
 
   const autoPlace = useCallback(
@@ -745,6 +844,77 @@ export function GameProvider({
     return () => window.clearTimeout(t);
   }, [releaseNotice]);
 
+  // ---- bring a flower back from a finished round (release_flower) -----------------------
+  // The mirror image of the block above: close_flower DELETES an Active hybrid, release_flower
+  // RESTORES a Submitted one. Nothing here is destructive, so there is no two-step arming.
+  //
+  // A flower is only offered when the chain would actually accept it. Every rule below is an
+  // on-chain constraint, and the first is the one that does the real work: the round must have
+  // reached Finalized. While it is Open or Closed its entries can still be scored and revealed,
+  // so pulling the flower back early would let it be bred (mutating it) or entered elsewhere
+  // while it is still competing.
+  const releasableRoundOf = useCallback(
+    (flower: Flower): number | null => {
+      if (!onRefetch) return null; // standalone/demo — no entries to release against
+      // Submitted is the status release_flower requires (FlowerNotSubmitted otherwise); it also
+      // means the optimistic override above has already hidden a flower we just brought back.
+      if (flower.status !== FlowerStatus.Submitted) return null;
+      // Starters are refused (StarterNotDeletable) — the same hybrids-only rule close_flower has.
+      if (flower.genomeStatus !== GenomeStatus.Encrypted) return null;
+      // Finalized round + unspent entry: fetchReleasableEntries only returns entries that pass
+      // both, so mere presence in the map is the answer.
+      return releasableEntries.get(flower.id)?.roundId ?? null;
+    },
+    [onRefetch, releasableEntries],
+  );
+
+  const canBringBack = useCallback(
+    (flower: Flower): boolean =>
+      bringingBackId === null && releasableRoundOf(flower) !== null,
+    [bringingBackId, releasableRoundOf],
+  );
+
+  const bringBackFlower = useCallback(
+    (flower: Flower) => {
+      const roundId = releasableRoundOf(flower);
+      if (!onRefetch || roundId === null || !canBringBack(flower)) return;
+      setBringingBackId(flower.id);
+      setBringBackNotice(null);
+      void (async () => {
+        try {
+          await actions.releaseFlower({ roundId, flowerRecord: flower.id });
+          if (!mounted.current) return;
+          // Active on-chain now: show it that way IMMEDIATELY rather than after the refetch —
+          // the "Entered" badge goes, and Breed/Submit/Release come back with no page reload.
+          // `justReleasedIds` holds that through the refetch below (see the adopt effect).
+          setJustReleasedIds((prev) => new Set(prev).add(flower.id));
+          setShelf((s) =>
+            s.map((f) => (f.id === flower.id ? { ...f, status: FlowerStatus.Active } : f)),
+          );
+          void onRefetch();
+          toast.success("Flower back in your collection.");
+        } catch (e) {
+          if (!mounted.current) return;
+          // Declined → the same transient, self-clearing note the other actions use.
+          if (e instanceof TxError && e.kind === "rejected") {
+            setBringBackNotice({ flowerId: flower.id, message: "Bring back cancelled." });
+          } else {
+            toast.error("Couldn't bring this flower back. Try again.");
+          }
+        } finally {
+          if (mounted.current) setBringingBackId(null);
+        }
+      })();
+    },
+    [onRefetch, releasableRoundOf, canBringBack, actions, toast],
+  );
+
+  useEffect(() => {
+    if (!bringBackNotice) return;
+    const t = window.setTimeout(() => setBringBackNotice(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [bringBackNotice]);
+
   // Bloom toast tap: try the refresh again; clear the toast once the garden reloads.
   const retryRefresh = useCallback(() => {
     if (!onRefetch) return;
@@ -843,10 +1013,17 @@ export function GameProvider({
       canRelease,
       releaseFlower,
       releaseNotice,
+      isBreedLocked,
+      releasableRoundOf,
+      canBringBack,
+      bringBackFlower,
+      bringingBackId,
+      bringBackNotice,
     }),
     [
       hint, hintBusy, hintNotice, canCheckMatch, checkMatch, dismissHint,
       hybridCount, collectionFull, releasingId, canRelease, releaseFlower, releaseNotice,
+      isBreedLocked, releasableRoundOf, canBringBack, bringBackFlower, bringingBackId, bringBackNotice,
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
       newBloom, roundOpen, hasEnteredCurrentRound, isEnteredInCurrentRound, breedsRemaining, breedError, breedNotice, dropBlockedNotice, journal, challenge, winners, activeTab, submittingId,
       bloomToast, authority, profileNeedsMigration, migrating, migrateError, migrateProfile, refetchGarden,

@@ -12,7 +12,8 @@
     "verify:bracket": "node --import ./scripts/ts-imports.mjs scripts/verify-bracket-plan.mjs",
     "verify:tx-errors": "node --import ./scripts/ts-imports.mjs scripts/verify-tx-errors.mjs",
     "verify:breed-lock": "node --import ./scripts/ts-imports.mjs scripts/verify-breed-lock.mjs",
-    "verify:score-batching": "node --import ./scripts/ts-imports.mjs scripts/verify-score-batching.mjs"
+    "verify:score-batching": "node --import ./scripts/ts-imports.mjs scripts/verify-score-batching.mjs",
+    "verify:release-flower": "node --import ./scripts/ts-imports.mjs scripts/verify-release-flower.mjs"
   },
   "dependencies": {
     "@anchor-lang/core": "^1.0.2",

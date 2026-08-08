@@ -3742,6 +3742,122 @@ export type SecretGarden = {
       "args": []
     },
     {
+      "name": "releaseFlower",
+      "docs": [
+        "Returns a flower that competed in a now-Finalized round to the player's collection",
+        "(Submitted -> Active). Owner-only, and only once the round is fully Finalized —",
+        "see `ReleaseFlower` for the full constraint rationale. Does NOT touch",
+        "`total_flowers` (`submit_entry` never decremented it)."
+      ],
+      "discriminator": [
+        118,
+        112,
+        11,
+        62,
+        122,
+        195,
+        85,
+        122
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "docs": [
+            "The flower's owner. Signs; pays nothing beyond the transaction fee."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "Pause kill-switch: releasing is a player-facing action, blocked while paused."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "round",
+          "docs": [
+            "The round the flower competed in. Must be fully Finalized — see the gate note above."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  111,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round.round_id",
+                "account": "competitionRound"
+              }
+            ]
+          }
+        },
+        {
+          "name": "entry",
+          "docs": [
+            "The caller's entry in that round. KEPT (never closed) — it is the round's permanent",
+            "record, and `round.top1/2/3` name entry pubkeys — but its `status` is flipped to",
+            "`ENTRY_STATUS_RELEASED` so each entry can release its flower exactly ONCE. See",
+            "`ENTRY_STATUS_RELEASED` for the replay this closes."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  110,
+                  116,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "round"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "flower",
+          "docs": [
+            "The flower to release. No `seeds` needed: Anchor proves it is a program-owned",
+            "`FlowerRecord`, the `owner` constraint proves it belongs to the signer, and the",
+            "`entry.flower_record` constraint above pins it to this specific entry."
+          ],
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "removeOperator",
       "docs": [
         "Removes a registered operator by pubkey, shifting the array left to keep the active",
@@ -4906,6 +5022,31 @@ export type SecretGarden = {
       "code": 6050,
       "name": "tier1WinnerRejected",
       "msg": "Could not record that tier-1 winner (duplicate or capacity reached)"
+    },
+    {
+      "code": 6051,
+      "name": "staleRevealResult",
+      "msg": "This reveal result belongs to a superseded partition (stale generation)"
+    },
+    {
+      "code": 6052,
+      "name": "roundNotFinalized",
+      "msg": "The round is not finalized"
+    },
+    {
+      "code": 6053,
+      "name": "flowerNotSubmitted",
+      "msg": "The flower is not submitted"
+    },
+    {
+      "code": 6054,
+      "name": "entryMismatch",
+      "msg": "That entry does not match the supplied round and flower"
+    },
+    {
+      "code": 6055,
+      "name": "entryAlreadyReleased",
+      "msg": "That entry has already released its flower"
     }
   ],
   "types": [
@@ -5069,6 +5210,20 @@ export type SecretGarden = {
               "PDA bump."
             ],
             "type": "u8"
+          },
+          {
+            "name": "generation",
+            "docs": [
+              "Monotonic re-init counter, bumped by EVERY `init_bracket` (and `promote_tier1`) call.",
+              "Every shard/semifinal/final `RevealTop3V3Result` is stamped with the generation current",
+              "at queue time; `collect_*`/`apply` reject any result whose generation != this. That",
+              "makes a re-init (which resets `shards_collected`/`finalists` but leaves the per-shard",
+              "result PDAs intact and `ready`) unable to smuggle a stale, differently-partitioned",
+              "result back in. `BracketState` persists across re-inits (`init_if_needed`), so a plain",
+              "counter strictly increases and never collides. (APPENDED — old brackets are finalized",
+              "and never re-read, so no migration is needed.)"
+            ],
+            "type": "u32"
           }
         ]
       }
@@ -6925,6 +7080,18 @@ export type SecretGarden = {
               "PDA bump."
             ],
             "type": "u8"
+          },
+          {
+            "name": "generation",
+            "docs": [
+              "The `generation` of the bracket/tier1 state this result was queued under, stamped at",
+              "queue time and NEVER touched by the callback. `collect_*`/`apply` require it to equal",
+              "the state's CURRENT generation, so a result computed under an earlier partition (before",
+              "an `init_bracket`/`init_tier1_bracket` re-init) can no longer be reused to place a",
+              "winner that was never actually ranked against its real shard-mates. (APPENDED field —",
+              "old finalized result accounts are never re-read, so this needs no migration.)"
+            ],
+            "type": "u32"
           }
         ]
       }
@@ -7228,6 +7395,26 @@ export type SecretGarden = {
               "PDA bump."
             ],
             "type": "u8"
+          },
+          {
+            "name": "generation",
+            "docs": [
+              "Re-init discriminator, as little-endian `u32` bytes (a `[u8; 4]`, NOT a `u32`, so the",
+              "struct stays align-1 for zero-copy). Set at `init_tier1_bracket` to the low 32 bits of",
+              "the Clock slot; every tier-1 shard `RevealTop3V3Result` is stamped with it, and",
+              "`collect_tier1_winners` rejects a result whose generation != this. A monotonic counter",
+              "would NOT work here: `close_tier1_bracket` destroys this account and `init_tier1_bracket`",
+              "(`init`, not `init_if_needed`) recreates it zeroed, resetting a counter. The Clock slot",
+              "sidesteps that — the exploit needs a READY (MPC-complete) stale result, which is always",
+              "many slots after the original init, so a re-init's slot is strictly greater and the",
+              "stamps can never collide. (APPENDED; +4 bytes — see the size assertion below.)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                4
+              ]
+            }
           }
         ]
       }

@@ -22,7 +22,9 @@ import {
   type GenomeStatusCode,
   type FlowerStatusCode,
   type RoundStatusCode,
+  EntryStatus,
   GenomeStatus,
+  RoundStatus,
 } from "../types";
 
 export const PROGRAM_ID = new PublicKey(idl.address);
@@ -359,6 +361,80 @@ export async function fetchRoundEntry(
     flowerId: acc.flowerRecord.toBase58(),
     submittedAt: Number(acc.submittedAt),
   };
+}
+
+/**
+ * A past entry this wallet can spend on `release_flower` to get its flower back.
+ * Keyed by flower in the map below, because that is the question the card asks.
+ */
+export interface ReleasableEntry {
+  /** The round the flower competed in — Finalized, or it would not be here. */
+  roundId: number;
+  /** Unix seconds the entry was submitted (shown as "entered in round N"). */
+  submittedAt: number;
+}
+
+/**
+ * Every flower this wallet can pull back out of a finished round, keyed by FlowerRecord
+ * address (comparable to `Flower.id`).
+ *
+ * `release_flower` needs the flower's ROUND, and a flower does not name it: the link runs the
+ * other way (CompetitionEntry is seeded by [round, player] and points AT the flower). So the
+ * only way from a flower to its round is to walk this wallet's entries — the same linkage
+ * fetchRoundEntry uses for one round, widened to every round that has ever been opened.
+ *
+ * Two batched reads, not getProgramAccounts: gPA is paid-only on the Tatum fallback endpoint
+ * (see rpcEndpoints) and is deliberately confined to the operator panel. Instead we derive all
+ * `currentRound` entry PDAs and fetch them in one getMultipleAccounts, then fetch only the
+ * rounds those entries actually name — typically a handful, since a player enters few rounds.
+ * Non-existent PDAs simply come back null, which is the common case for most round ids.
+ *
+ * Only entries that would actually SUCCEED are returned, mirroring every on-chain constraint:
+ *   - `round.status == Finalized`  (RoundNotFinalized) — the gate release exists to enforce;
+ *   - `entry.status == Submitted`  (EntryAlreadyReleased) — release is one-shot per entry;
+ *   - `entry.flower_record`        (EntryMismatch) — used as the map key, so it always agrees.
+ * The flower's own `status == Submitted` and hybrid-only rules are checked by the caller
+ * against the FlowerRecord it already holds.
+ */
+export async function fetchReleasableEntries(
+  program: SecretGardenProgram,
+  owner: PublicKey,
+  currentRoundId: number,
+): Promise<Map<string, ReleasableEntry>> {
+  const out = new Map<string, ReleasableEntry>();
+  if (currentRoundId <= 0) return out; // no round has ever been opened
+
+  // Round ids are 1..currentRound, so every entry this wallet could hold is at a derivable PDA.
+  const rounds = Array.from({ length: currentRoundId }, (_, i) => roundPda(i + 1));
+  const entryPdas = rounds.map((r) => entryPda(r, owner));
+
+  const CHUNK = 100; // getMultipleAccounts limit
+  const entries: { roundId: number; acc: IdlAccounts<SecretGarden>["competitionEntry"] }[] = [];
+  for (let i = 0; i < entryPdas.length; i += CHUNK) {
+    const slice = entryPdas.slice(i, i + CHUNK);
+    const accs = await program.account.competitionEntry.fetchMultiple(slice);
+    accs.forEach((acc, j) => {
+      // A spent entry can never become releasable again — drop it before we fetch its round.
+      if (acc && acc.status === EntryStatus.Submitted) {
+        entries.push({ roundId: i + j + 1, acc });
+      }
+    });
+  }
+  if (entries.length === 0) return out;
+
+  // Only the rounds those entries name — usually one or two, never the whole history.
+  const roundAccs = await program.account.competitionRound.fetchMultiple(
+    entries.map((e) => roundPda(e.roundId)),
+  );
+  roundAccs.forEach((round, i) => {
+    if (!round || round.status !== RoundStatus.Finalized) return;
+    const { roundId, acc } = entries[i];
+    out.set(acc.flowerRecord.toBase58(), {
+      roundId,
+      submittedAt: Number(acc.submittedAt),
+    });
+  });
+  return out;
 }
 
 /** A hybrid (sealed genome) is one breeding result; build the Hybrid Journal from them. */

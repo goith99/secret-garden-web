@@ -8,6 +8,7 @@
  *   submit_entry       — submit one Active flower to the Open competition round.
  *   queue_private_hint — ask which of the round's target traits one OWN flower satisfies.
  *   close_flower       — release one own Active hybrid, freeing a collection slot.
+ *   release_flower     — bring one own Submitted hybrid back from a FINALIZED round.
  *
  * Operator/authority instructions (open_round, queue_score_entry, the bracket reveal, cancel*)
  * are deliberately NOT exposed here — see useOperatorActions at the bottom of this file.
@@ -330,6 +331,13 @@ export interface GardenActions {
    */
   closeFlower: (flowerRecord: PublicKey) => Promise<string>;
   /**
+   * Bring a flower back out of a FINISHED round: release_flower returns it from Submitted to
+   * Active, so it can breed, be closed, or be entered again. The opposite of closeFlower —
+   * nothing is deleted. `roundId` is the PAST round the flower competed in (never the live
+   * one); see fetchReleasableEntries for where it comes from.
+   */
+  releaseFlower: (args: { roundId: number; flowerRecord: string }) => Promise<string>;
+  /**
    * Ask for a private hint on one of the player's OWN flowers: which of the open round's
    * target traits it satisfies. Returns the ephemeral private key the answer is sealed to —
    * the caller MUST keep it alive until it reads and decrypts the result (see QueueHintResult).
@@ -618,6 +626,45 @@ export function useGardenActions(): GardenActions {
     [program, publicKey, submit],
   );
 
+  // Bring a flower back from a finished round: release_flower flips FlowerRecord.status from
+  // Submitted to Active, making it breedable, closeable and re-submittable again. It does NOT
+  // delete anything (that's close_flower) and does not touch total_flowers — submit_entry never
+  // decremented it, so the flower has held its collection slot the whole time.
+  //
+  // The round is passed explicitly rather than derived from the live counter: this instruction
+  // is about a PAST round (the one the flower actually competed in), which is exactly the round
+  // `config.current_round` is not. The caller gets it from fetchReleasableEntries, which read it
+  // off the CompetitionEntry — the only account that links a flower back to its round.
+  //
+  // Every rule is an on-chain constraint (round Finalized, entry unspent, entry names this
+  // flower, flower owned + Submitted + hybrid, game not paused); the UI mirrors them only to
+  // avoid offering a button that would certainly fail.
+  const releaseFlower = useCallback(
+    async ({
+      roundId,
+      flowerRecord,
+    }: {
+      roundId: number;
+      flowerRecord: string;
+    }): Promise<string> => {
+      if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
+      const owner = publicKey;
+      const round = roundPda(roundId);
+      const tx = await program.methods
+        .releaseFlower()
+        .accountsPartial({
+          owner,
+          config: configPda(),
+          round,
+          entry: entryPda(round, owner),
+          flower: new PublicKey(flowerRecord),
+        })
+        .transaction();
+      return submit(tx);
+    },
+    [program, publicKey, submit],
+  );
+
   // ---- private hint -------------------------------------------------------------------
   // Same x25519 + RescueCipher primitives as startBreeding, but the key lifetime is the
   // opposite: breeding seals nothing back to the player (the offspring is public), so it
@@ -734,11 +781,12 @@ export function useGardenActions(): GardenActions {
       pollBreeding,
       fetchFlower: fetchFlowerRecord,
       closeFlower,
+      releaseFlower,
       queuePrivateHint,
       fetchHintResult,
       decryptHint,
     }),
-    [ready, checkStarterFunds, createProfile, claimStarters, startBreeding, submitEntry, migrateProfile, pollBreeding, fetchFlowerRecord, closeFlower, queuePrivateHint, fetchHintResult, decryptHint],
+    [ready, checkStarterFunds, createProfile, claimStarters, startBreeding, submitEntry, migrateProfile, pollBreeding, fetchFlowerRecord, closeFlower, releaseFlower, queuePrivateHint, fetchHintResult, decryptHint],
   );
 }
 

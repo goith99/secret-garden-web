@@ -15,10 +15,12 @@ import {
   fetchFlowerRecords,
   fetchGameConfig,
   fetchRoundEntry,
+  fetchReleasableEntries,
   fetchPlayerProfile,
   isHybrid,
   type GardenConfig,
   type GardenProfile,
+  type ReleasableEntry,
 } from "../program/accounts";
 import { useGardener } from "../wallet/useGardener";
 import {
@@ -50,6 +52,14 @@ export interface GardenData {
    * submit_entry and never cleared on-chain, so it means "was entered in SOME round, ever".
    */
   currentRoundEntryFlowerId: string | null;
+  /**
+   * Every flower this wallet can bring back out of a FINISHED round, keyed by FlowerRecord
+   * address. A Submitted flower is stuck (unbreedable, uncloseable, unsubmittable) until
+   * `release_flower` returns it to Active, and that instruction only accepts a round that has
+   * reached Finalized — so this map is exactly the set of "Bring Back" buttons to offer.
+   * Empty for a wallet with nothing to reclaim, which is the normal case.
+   */
+  releasableEntries: Map<string, ReleasableEntry>;
   /** True when the connected wallet's profile is a pre-5D (68-byte) account needing migration. */
   profileNeedsMigration: boolean;
   /** Reload on-chain data. Resolves true on success, false if the fetch failed. */
@@ -82,6 +92,7 @@ const EMPTY: DataState = {
   error: null,
   hasEnteredCurrentRound: false,
   currentRoundEntryFlowerId: null,
+  releasableEntries: new Map(),
   profileNeedsMigration: false,
 };
 
@@ -140,6 +151,7 @@ export function useGardenData(): GardenData {
           error: null,
           hasEnteredCurrentRound: false, // no wallet → no entry
           currentRoundEntryFlowerId: null,
+          releasableEntries: new Map(), // no wallet → nothing to reclaim
           profileNeedsMigration: false,
         });
         return true;
@@ -159,6 +171,7 @@ export function useGardenData(): GardenData {
           error: null,
           hasEnteredCurrentRound: false,
           currentRoundEntryFlowerId: null,
+          releasableEntries: new Map(),
           profileNeedsMigration: false,
         });
         return false;
@@ -183,6 +196,7 @@ export function useGardenData(): GardenData {
           error: null,
           hasEnteredCurrentRound: false,
           currentRoundEntryFlowerId: null,
+          releasableEntries: new Map(),
           profileNeedsMigration: false,
         });
         return true;
@@ -203,6 +217,14 @@ export function useGardenData(): GardenData {
         ? await fetchRoundEntry(program, owner, activeRound.roundId)
         : null;
       const hasEnteredCurrentRound = currentRoundEntry !== null;
+      // Which of this wallet's PAST entries can still be spent to bring their flower back.
+      // Walks every round id up to the live one, so it covers a flower entered long ago —
+      // gameConfig is the only source for that bound (activeRound is null between rounds).
+      const releasableEntries = await fetchReleasableEntries(
+        program,
+        owner,
+        gameConfig?.currentRound ?? 0,
+      );
       if (my !== reqId.current) return false;
 
       setState({
@@ -215,6 +237,7 @@ export function useGardenData(): GardenData {
         error: null,
         hasEnteredCurrentRound,
         currentRoundEntryFlowerId: currentRoundEntry?.flowerId ?? null,
+        releasableEntries,
         profileNeedsMigration: playerProfile.needsMigration,
       });
       return true;
