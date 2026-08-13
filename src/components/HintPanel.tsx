@@ -6,18 +6,21 @@ import type { HintView } from "../hooks/usePrivateHint";
  * will actually award it, and the traits behind that number.
  *
  *   ┌────────────────────────────────────────┐
- *   │  100%                                  │
- *   │  1 of 3 traits · +90 for age · capped  │
+ *   │  66%                                   │
+ *   │  2 of 3 traits · +20 for age           │
  *   │  ✓ Mutant                              │
- *   │  ✗ Full Bloom                          │
+ *   │  ✓ Full Bloom                          │
  *   │  ✗ Tall                                │
  *   └────────────────────────────────────────┘
  *
  * The headline number is the SCORE the challenge will award (see `scoreOf`), not the raw
- * trait fraction — those are different numbers, because an older flower earns +5 per
- * generation on top of its traits. That is why a flower can read 1 of 3 traits and still
- * show 100%. The line underneath says where the number came from, so the fraction and the
- * percentage never look like they disagree.
+ * trait fraction — those are different numbers, because age AMPLIFIES matched traits: a
+ * flower earns `floor(matched / total * 70)` for its traits plus up to
+ * `floor(matched / total * 30)` more for its generation. Age is a multiplier on real
+ * matches, never a substitute for them, so a flower matching NOTHING scores zero at any
+ * generation, and only a clean sweep reaches 100 (matching every trait at generation >= 16).
+ * The line underneath says where the number came from, so the fraction and the percentage
+ * never look like they disagree.
  *
  * Styled to the game's dark botanical palette (deep bed, moss border, gold/mint for a match,
  * dimmed parchment for a miss) rather than a generic score card. Player vocabulary only —
@@ -61,16 +64,14 @@ export function HintPanel({ hint, onDismiss }: { hint: HintView; onDismiss: () =
           ✕
         </button>
       </div>
-      {/* Where the score came from. Without this, an old flower matching one trait and
-          scoring 100 reads as a mistake. */}
+      {/* Where the score came from, so a partial match scoring below its trait fraction
+          does not read as a mistake. */}
       <p className="mb-1 font-body text-[10px] leading-tight text-garden-parch/55">
         {hint.matchedCount} of {hint.targetCount} traits
         {hint.generationBonus > 0 && <> · +{hint.generationBonus} for age</>}
-        {/* Reached the 100 cap on age rather than a clean sweep — say so, otherwise the
-            trait line and the percentage look like they disagree. "capped" rather than
-            "maxed" now the headline is a percentage: it reads as "100% is the ceiling, not
-            a perfect match", which is exactly the case this flags. */}
-        {hint.score === 100 && hint.matchedCount < hint.targetCount && <> · capped</>}
+        {/* No "capped" marker: under the synergy formula 100 is unreachable without a clean
+            sweep, so a score of 100 and a partial trait line can never co-occur. The highest
+            a partial match reaches is 74 (3 of 4 traits at generation >= 16). */}
       </p>
       <ul className="flex flex-col gap-0.5">
         {hint.traits.map((t) => (
