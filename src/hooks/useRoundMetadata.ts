@@ -10,7 +10,7 @@
  * holding a key that can write the table — see saveRoundMetadata.
  */
 import { useEffect, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { invokeErrorMessage, supabase } from "../lib/supabase";
 
 /** The background presets an operator can pick from. Cosmetic, frontend-rendered only. */
 export const GARDEN_BACKGROUNDS = [
@@ -81,20 +81,6 @@ export interface RoundMetadataSigner {
   address: string | null;
   /** Signs a UTF-8 message, resolving to a base64 signature. Null when unsupported. */
   signMessage: ((message: string) => Promise<string>) | null;
-}
-
-/** Pulls a readable message out of a functions.invoke() error, whose body holds the real one. */
-async function invokeErrorMessage(error: unknown): Promise<string> {
-  const context = (error as { context?: unknown })?.context;
-  if (context instanceof Response) {
-    try {
-      const body = await context.clone().json();
-      if (typeof body?.error === "string") return body.error;
-    } catch {
-      /* non-JSON error body → fall through to the generic message */
-    }
-  }
-  return error instanceof Error ? error.message : String(error);
 }
 
 /**

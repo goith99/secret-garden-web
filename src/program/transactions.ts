@@ -856,8 +856,18 @@ export interface OperatorActions {
 export function useOperatorActions(): OperatorActions {
   const program = useProgram();
   const { connection } = useConnection();
-  const { publicKey, sendTransaction } = useWallet();
+  const { publicKey, sendTransaction, signMessage: adapterSignMessage } = useWallet();
   const { reportWrongNetwork } = useNetworkGuard();
+
+  // Bytes in, base64 out — the same shape useGardener exposes, so the reveal sequence and the
+  // metadata write hand the edge functions identical signatures.
+  const signMessage = useMemo(() => {
+    if (!adapterSignMessage) return null;
+    return async (message: string): Promise<string> => {
+      const signature = await adapterSignMessage(new TextEncoder().encode(message));
+      return btoa(String.fromCharCode(...signature));
+    };
+  }, [adapterSignMessage]);
 
   const ready = !!program && !!publicKey;
 
@@ -956,8 +966,8 @@ export function useOperatorActions(): OperatorActions {
   // every other operator action uses.
   const sequenceContext = useCallback(() => {
     if (!program || !publicKey) throw new TxError("failed", "wallet not connected");
-    return { program, authority: publicKey, submit };
-  }, [program, publicKey, submit]);
+    return { program, authority: publicKey, submit, signMessage };
+  }, [program, publicKey, submit, signMessage]);
 
   const scoreEntries = useCallback(
     (roundId: number, onProgress: ScoreProgressFn): Promise<ScoreOutcome> =>

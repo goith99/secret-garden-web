@@ -35,6 +35,8 @@ import { ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
 import type { SecretGardenProgram } from "./client";
 import { TxError } from "./errors";
 import { arciumAccountsFor } from "./arcium";
+import { supabase } from "../lib/supabase";
+import { saveRoundResults } from "../hooks/useRoundHistory";
 import {
   bracketPda,
   configPda,
@@ -126,6 +128,12 @@ export interface RevealContext {
   program: SecretGardenProgram;
   authority: PublicKey;
   submit: (tx: Transaction) => Promise<string>;
+  /**
+   * Signs a UTF-8 message, resolving to a base64 signature — used once at the end of the
+   * sequence to authorise the Supabase results mirror. Null when the wallet cannot sign
+   * messages, which costs the mirror and nothing else.
+   */
+  signMessage?: ((message: string) => Promise<string>) | null;
 }
 
 /** One tick of the progress indicator. `step` counts SIGNATURES already confirmed. */
@@ -644,6 +652,57 @@ export async function runBracketReveal(
       .transaction(),
   );
   progress.signed("Winners revealed.");
+
+  // The round is now finished on-chain, which is what actually matters. Everything below is
+  // the off-chain mirror for the Daily Winners panel.
+  await mirrorResultsToSupabase(ctx, roundId, progress);
+}
+
+/**
+ * Publish the just-revealed winners to Supabase so the Daily Winners panel shows them.
+ *
+ * DELIBERATELY NON-FATAL. By the time this runs `apply_bracket_result` has confirmed and the
+ * podium is final on-chain; the chain is the authority and this table is a convenience mirror.
+ * A Supabase outage, a declined signature prompt, or an unconfigured build must not make a
+ * successful reveal report failure to the operator — so every path here resolves, and the
+ * outcome is reported through the progress line instead.
+ *
+ * The write goes through the set-round-results edge function, which re-derives the winners
+ * from the chain rather than trusting anything sent to it. This function therefore sends only
+ * the round number, a timestamp and a signature; there is no result data to forge. That is the
+ * whole reason the previous anon-key writer was removed: it could only have worked if the
+ * tables granted INSERT to `anon`, which would have made them writable by any visitor.
+ */
+async function mirrorResultsToSupabase(
+  ctx: RevealContext,
+  roundId: number,
+  progress: Progress,
+): Promise<void> {
+  if (!supabase) return; // build has no Supabase configured — nothing to mirror to
+  if (!ctx.signMessage) {
+    progress.say("Winners revealed. (This wallet cannot sign, so the results board was not updated.)");
+    return;
+  }
+
+  progress.say("Publishing the results board… (approve in wallet)");
+  try {
+    const { alreadyPublished } = await saveRoundResults(roundId, {
+      address: ctx.authority.toBase58(),
+      signMessage: ctx.signMessage,
+    });
+    progress.say(
+      alreadyPublished
+        ? "Winners revealed. Results board was already published."
+        : "Winners revealed and published to the results board.",
+    );
+  } catch (e) {
+    // Worth surfacing, not worth failing: the operator can re-publish later.
+    progress.say(
+      `Winners revealed. The results board could not be updated (${
+        e instanceof Error ? e.message : String(e)
+      }) — the winners are safe on-chain.`,
+    );
+  }
 }
 
 // ---- single tier ----------------------------------------------------------------------
