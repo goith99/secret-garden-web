@@ -147,6 +147,8 @@ const SPECIES_NAMES = [
 ];
 const flowerName = (v, i) =>
   v === 255 ? `Hybrid #${i}` : (SPECIES_NAMES[v] ?? `Flower #${i}`);
+/** Shown for a winner whose FlowerRecord was closed after the round — see operator.ts. */
+const CLOSED_FLOWER_NAME = "Retired Bloom";
 
 const winnerRows = [];
 console.log(`\n=== winners ===`);
@@ -157,13 +159,18 @@ for (const [i, entryPk] of [r.top1, r.top2, r.top3].entries()) {
     console.log(`  rank ${i + 1}: entry ${entryPk.toBase58()} not found among round entries`);
     continue;
   }
-  const flower = await program.account.flowerRecord.fetch(e.account.flowerRecord);
+  // fetchNullable, NOT fetch: fetch() throws on a closed account, and an owner may close a
+  // winning flower after the round to reclaim its rent. Same fallback operator.ts and the
+  // set-round-results edge function use, so every writer stores the same value.
+  const flower = await program.account.flowerRecord.fetchNullable(e.account.flowerRecord);
   const row = {
     round_number: ROUND_ID,
     rank: i + 1,
     wallet_address: e.account.player.toBase58(),
-    flower_name: flowerName(flower.visualSpeciesId, flower.flowerIndex),
-    generation: flower.generation,
+    flower_name: flower
+      ? flowerName(flower.visualSpeciesId, flower.flowerIndex)
+      : CLOSED_FLOWER_NAME,
+    generation: flower ? flower.generation : 0,
   };
   winnerRows.push(row);
   console.log(`  rank ${row.rank}: ${row.wallet_address}  (${row.flower_name}, gen ${row.generation})`);
