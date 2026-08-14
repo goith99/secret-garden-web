@@ -44,8 +44,14 @@ export function speciesOf(id: number): SpeciesSkin {
  * These are the EXACT names from the program's `constants.rs` TRAIT_TABLE (10 entries), not
  * decorative substitutes: the same ids drive scoring AND the per-trait "Check Match" result,
  * so a mismatched label here would tell the player they matched a trait they did not.
- * Keep in lockstep with TRAIT_TABLE — the conditions each one checks live in the score_entry
- * circuit and are documented beside each entry in constants.rs.
+ *
+ * CANONICAL SOURCE: `trait_satisfied` in secret-garden's `encrypted-ixs/src/lib.rs`. That one
+ * Arcis free function is shared by the `score_entry_v2` and `private_hint` circuits and is the
+ * only executable definition of these conditions; `constants.rs` TRAIT_TABLE mirrors it for the
+ * names. The conditions in the trailing comments below are a NON-EXECUTABLE mirror in a separate
+ * repository — nothing checks them against the circuit, so they must be changed TOGETHER with it.
+ * secret-garden's `tools/trait-satisfied-difftest` guards the in-repo copies; this one is
+ * out of its reach, which is exactly why it is spelled out here.
  */
 export const TRAIT_NAMES: string[] = [
   "Crimson", // 0 — color_gene >= 180
