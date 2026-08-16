@@ -34,7 +34,7 @@ import { BN } from "@anchor-lang/core";
 import { ComputeBudgetProgram, PublicKey, Transaction } from "@solana/web3.js";
 import type { SecretGardenProgram } from "./client";
 import { TxError } from "./errors";
-import { arciumAccountsFor } from "./arcium";
+import { arciumAccountsFor, CIRCUITS } from "./arcium";
 import { supabase } from "../lib/supabase";
 import { saveRoundResults } from "../hooks/useRoundHistory";
 import {
@@ -180,13 +180,17 @@ export interface RevealStatus {
 async function fetchSortedEntryKeys(
   program: SecretGardenProgram,
   round: PublicKey,
-): Promise<{ keys: PublicKey[]; unscored: number }> {
+): Promise<{ keys: PublicKey[]; unscored: number; flowers: Map<string, PublicKey> }> {
   const accs = await program.account.competitionEntry.all([
     { memcmp: { offset: 8, bytes: round.toBase58() } },
   ]);
   return {
     keys: sortEntriesByteWise(accs.map((a) => a.publicKey)),
     unscored: accs.filter((a) => !a.account.scored).length,
+    // `reveal_top3_v5` ranks on `score * 8 + rarity`; the program reads each rarity from the
+    // FlowerRecord the entry itself recorded, so every QUEUE call passes the flowers as a
+    // second run of remaining accounts.
+    flowers: new Map(accs.map((a) => [a.publicKey.toBase58(), a.account.flowerRecord])),
   };
 }
 
@@ -276,7 +280,8 @@ export async function inspectReveal(
     };
   }
 
-  const { keys, unscored } = await fetchSortedEntryKeys(program, round);
+  const { keys, unscored, flowers } = await fetchSortedEntryKeys(program, round);
+  flowerByEntry = flowers;
   if (keys.length !== r.participantCount) {
     return {
       ...base,
@@ -534,6 +539,25 @@ async function runTier(
 const metas = (keys: PublicKey[]) =>
   keys.map((pubkey) => ({ pubkey, isWritable: false, isSigner: false }));
 
+/** entry pubkey -> its FlowerRecord, refreshed at the start of each reveal run. */
+let flowerByEntry = new Map<string, PublicKey>();
+
+/**
+ * remaining-accounts for the four QUEUE instructions: the entries, then their FlowerRecords
+ * in the SAME order. The collect_* instructions are UNCHANGED and must keep plain `metas` —
+ * they still expect exactly n accounts and will fail WrongEntryCount with 2n.
+ */
+const metasWithFlowers = (keys: PublicKey[]) => [
+  ...metas(keys),
+  ...metas(
+    keys.map((k) => {
+      const f = flowerByEntry.get(k.toBase58());
+      if (!f) throw new Error(`no FlowerRecord known for entry ${k.toBase58()}`);
+      return f;
+    }),
+  ),
+];
+
 /**
  * Run the whole reveal for `roundId`, from wherever it currently stands to `scoring_revealed`.
  *
@@ -565,7 +589,8 @@ export async function runBracketReveal(
     );
   }
 
-  const { keys, unscored } = await fetchSortedEntryKeys(program, round);
+  const { keys, unscored, flowers } = await fetchSortedEntryKeys(program, round);
+  flowerByEntry = flowers;
   if (keys.length !== r.participantCount) {
     throw new TxError(
       "failed",
@@ -623,9 +648,9 @@ export async function runBracketReveal(
               round,
               bracket,
               result: finalResult,
-              ...arciumAccountsFor("reveal_top3_v3", offset),
+              ...arciumAccountsFor(CIRCUITS.revealTop3, offset),
             })
-            .remainingAccounts(metas(finalists))
+            .remainingAccounts(metasWithFlowers(finalists))
             .transaction(),
           REVEAL_CU_LIMIT,
         ),
@@ -756,9 +781,9 @@ async function runSingleTier(
                 round,
                 bracket,
                 result: shardResultPda(round, k),
-                ...arciumAccountsFor("reveal_top3_v3", offset),
+                ...arciumAccountsFor(CIRCUITS.revealTop3, offset),
               })
-              .remainingAccounts(metas(plan.shards[k].entries))
+              .remainingAccounts(metasWithFlowers(plan.shards[k].entries))
               .transaction(),
             REVEAL_CU_LIMIT,
           ),
@@ -852,9 +877,9 @@ async function runTwoTier(
                   round,
                   tier1,
                   result: shardResultPda(round, k),
-                  ...arciumAccountsFor("reveal_top3_v3", offset),
+                  ...arciumAccountsFor(CIRCUITS.revealTop3, offset),
                 })
-                .remainingAccounts(metas(plan.shards[k].entries))
+                .remainingAccounts(metasWithFlowers(plan.shards[k].entries))
                 .transaction(),
               REVEAL_CU_LIMIT,
             ),
@@ -924,9 +949,9 @@ async function runTwoTier(
                 tier1,
                 bracket,
                 result: semiResultPda(round, k),
-                ...arciumAccountsFor("reveal_top3_v3", offset),
+                ...arciumAccountsFor(CIRCUITS.revealTop3, offset),
               })
-              .remainingAccounts(metas(sliceFor(k)))
+              .remainingAccounts(metasWithFlowers(sliceFor(k)))
               .transaction(),
             REVEAL_CU_LIMIT,
           ),

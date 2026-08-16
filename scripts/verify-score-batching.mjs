@@ -32,7 +32,7 @@ import {
   SCORE_BATCH_SIZE,
 } from "../src/program/scoring.ts";
 import { REVEAL_CU_LIMIT, withComputeUnitLimit } from "../src/program/reveal.ts";
-import { arciumAccountsFor } from "../src/program/arcium.ts";
+import { arciumAccountsFor, CIRCUITS } from "../src/program/arcium.ts";
 import { TxError } from "../src/program/errors.ts";
 
 const { PublicKey, Keypair, Transaction, Connection, ComputeBudgetProgram } = anchor.web3;
@@ -122,7 +122,7 @@ async function scoreIx(e) {
       round: e.account.round,
       entry: e.publicKey,
       flowerRecord: e.account.flowerRecord,
-      ...arciumAccountsFor("score_entry_v2", offset),
+      ...arciumAccountsFor(CIRCUITS.scoreEntry, offset),
     })
     .instruction();
 }
@@ -452,8 +452,12 @@ console.log("\n=== 7. reveal queue still fits with its compute-unit limit ===");
     new PublicKey(idl.address),
   )[0];
   const offset = new anchor.BN(Array.from(crypto.getRandomValues(new Uint8Array(8))));
-  // MAX_SHARD_SIZE entries — the largest shard the planner can produce.
-  const entries = Array.from({ length: 13 }, () => ({
+  // MAX_SHARD_SIZE entries — the largest shard the planner can produce — followed by their
+  // FlowerRecords. `reveal_top3_v5` ranks on `score * 8 + rarity` and reads each rarity from
+  // the entry's flower, so every QUEUE instruction now sends 2n remaining accounts, not n.
+  // Sizing this at n was a live under-measurement: it declared the worst-case shard "fits"
+  // while the real transaction carried 13 more addresses than the check ever serialized.
+  const entries = Array.from({ length: 13 * 2 }, () => ({
     pubkey: Keypair.generate().publicKey,
     isWritable: false,
     isSigner: false,
@@ -466,13 +470,19 @@ console.log("\n=== 7. reveal queue still fits with its compute-unit limit ===");
       round,
       bracket,
       result,
-      ...arciumAccountsFor("reveal_top3_v3", offset),
+      ...arciumAccountsFor(CIRCUITS.revealTop3, offset),
     })
     .remainingAccounts(entries)
     .transaction();
   const before = wireSize(bare);
   const after = wireSize(withComputeUnitLimit(bare, REVEAL_CU_LIMIT));
-  check(after <= PACKET_LIMIT, `13-entry shard queue still fits`, `${before} -> ${after} B (limit ${PACKET_LIMIT})`);
+  check(
+    after <= PACKET_LIMIT,
+    `MAX_SHARD_SIZE (${13}) shard queue — ${13 * 2} accounts: entries + flowers — still fits`,
+    `${before} -> ${after} B (limit ${PACKET_LIMIT}). ` +
+      `With the rarity tiebreaker every QUEUE reveal sends 2n remaining accounts, so the ` +
+      `measured ceiling is 7 entries/shard (1184 B); n=8 is 1250 B. MAX_SHARD_SIZE is 13.`,
+  );
   check(REVEAL_CU_LIMIT > 158_914, "the limit exceeds the measured 158,914 CU worst case", `${REVEAL_CU_LIMIT}`);
   check(
     withComputeUnitLimit(bare, REVEAL_CU_LIMIT).instructions[0].programId.equals(

@@ -70,7 +70,7 @@ import {
 } from "@solana/web3.js";
 import type { SecretGardenProgram } from "./client";
 import { TxError } from "./errors";
-import { arciumAccountsFor } from "./arcium";
+import { arciumAccountsFor, CIRCUITS } from "./arcium";
 import { roundPda } from "./accounts";
 
 /**
@@ -183,7 +183,7 @@ async function scoreInstruction(
       round: q.round,
       entry: q.entry,
       flowerRecord: q.flowerRecord,
-      ...arciumAccountsFor("score_entry_v2", offset),
+      ...arciumAccountsFor(CIRCUITS.scoreEntry, offset),
     })
     .instruction();
 }

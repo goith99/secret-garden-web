@@ -48,7 +48,7 @@ import {
   getMXEPublicKey,
 } from "@arcium-hq/client";
 import { useProgram, type SecretGardenProgram } from "./client";
-import { arciumAccountsFor } from "./arcium";
+import { arciumAccountsFor, CIRCUITS } from "./arcium";
 import {
   inspectReveal,
   runBracketReveal,
@@ -560,7 +560,7 @@ export function useGardenActions(): GardenActions {
           flowerB: flowerPda(player, flowerBIndex),
           experiment,
           offspring,
-          ...arciumAccountsFor("breed", offset),
+          ...arciumAccountsFor(CIRCUITS.breed, offset),
         })
         .transaction();
 
@@ -701,7 +701,7 @@ export function useGardenActions(): GardenActions {
           round: roundPda(roundId),
           flower: flowerRecord,
           hintResult: hintPda(player),
-          ...arciumAccountsFor("private_hint", offset),
+          ...arciumAccountsFor(CIRCUITS.privateHint, offset),
         })
         .transaction();
 

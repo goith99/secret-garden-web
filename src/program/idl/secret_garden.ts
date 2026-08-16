@@ -174,7 +174,7 @@ export type SecretGarden = {
       ]
     },
     {
-      "name": "breedCallback",
+      "name": "breedV3Callback",
       "docs": [
         "Callback invoked by the Arcium cluster once `breed` finishes.",
         "",
@@ -184,14 +184,14 @@ export type SecretGarden = {
         "Idempotent via `experiment.callback_processed` — a retried callback no-ops."
       ],
       "discriminator": [
-        240,
-        22,
-        217,
-        222,
-        231,
-        120,
-        122,
-        50
+        98,
+        203,
+        17,
+        47,
+        116,
+        107,
+        226,
+        74
       ],
       "accounts": [
         {
@@ -246,7 +246,7 @@ export type SecretGarden = {
                   "kind": "type",
                   "type": {
                     "defined": {
-                      "name": "breedOutput"
+                      "name": "breedV3Output"
                     }
                   }
                 }
@@ -262,7 +262,7 @@ export type SecretGarden = {
         "Permissionless recovery: after `EXPERIMENT_TIMEOUT_SECONDS`, anyone can expire a",
         "stuck Queued/Processing experiment to unlock the player's parents. This touches no",
         "Arcium/MPC state. It sets `callback_processed = true`, so if the MPC computation",
-        "later completes anyway, `breed_callback`'s idempotency guard makes it a no-op —",
+        "later completes anyway, `breed_v3_callback`'s idempotency guard makes it a no-op —",
         "preventing a double `active_experiment_count` decrement or a second resolution.",
         "(Trade-off: a successful-but-late computation is discarded; the pre-created",
         "offspring stays Locked. The priority is recovering the player's parent flowers.)"
@@ -2040,6 +2040,86 @@ export type SecretGarden = {
       "args": []
     },
     {
+      "name": "migrateFlower",
+      "docs": [
+        "Stage 5E migration: grows a pre-5E `FlowerRecord` (created before",
+        "`times_bred_as_parent` was appended) by 1 byte so the current program can read it.",
+        "Exactly the `migrate_profile` pattern, retargeted: the flower is taken as a RAW",
+        "account because a 528-byte pre-5E record is one byte short of the current 529-byte",
+        "layout, so `Account<FlowerRecord>` would fail with `AccountDidNotDeserialize` before",
+        "any realloc constraint could run. Grows in place, preserving the discriminator and",
+        "every existing field, and zero-fills the appended byte (so a migrated flower starts",
+        "at `times_bred_as_parent = 0` — correct: pre-5E breeds were never counted).",
+        "",
+        "SELF-SERVICE and owner-signed: the PDA seeds bind the flower to the signing owner,",
+        "and the owner funds the ~6960-lamport rent top-up themselves. That means it can only",
+        "migrate flowers whose key the caller holds. For production, where players' keys are",
+        "not available, an operator-signed variant is needed instead — this one is sufficient",
+        "for dev, where the wallets in use are our own.",
+        "",
+        "Idempotent (a flower already at the new size is a no-op). Runs regardless of the",
+        "pause kill-switch — it is a recovery/maintenance op."
+      ],
+      "discriminator": [
+        155,
+        36,
+        163,
+        206,
+        21,
+        117,
+        145,
+        45
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "flower",
+          "docs": [
+            "`FlowerRecord`, so it cannot be loaded as a typed `Account`. The seeds bind it to the",
+            "signing owner, and `owner = crate::ID` proves it is one of this program's accounts."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  108,
+                  111,
+                  119,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "arg",
+                "path": "flowerIndex"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "flowerIndex",
+          "type": "u32"
+        }
+      ]
+    },
+    {
       "name": "migrateProfile",
       "docs": [
         "Stage 5D migration: grows a pre-5D `PlayerProfile` (created with the smaller layout,",
@@ -2163,6 +2243,109 @@ export type SecretGarden = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "operatorMigrateFlower",
+      "docs": [
+        "Operator-signed counterpart to `migrate_flower`, for migrating flowers whose owner's",
+        "key is not available — i.e. every real player's flower in production, and every",
+        "throwaway test wallet in dev.",
+        "",
+        "The realloc logic is IDENTICAL to `migrate_flower` (same size check, same rent top-up,",
+        "same `resize`, same idempotent early return). Exactly two things differ:",
+        "1. `owner` is an `UncheckedAccount` used ONLY to derive the flower PDA — the owner",
+        "does not sign, and their pubkey is never written anywhere;",
+        "2. the rent top-up is paid by the signing operator, so one funded wallet can migrate",
+        "the whole population in a batch.",
+        "",
+        "This grants the operator NO power over flower CONTENTS. The account is taken as a raw",
+        "`UncheckedAccount` and this handler only ever calls `resize`, which appends",
+        "zero-initialized bytes and cannot alter existing ones; no field is read, decoded or",
+        "written. The PDA seeds still bind the account to `owner`, so an operator cannot point",
+        "this at some other account, and `owner = crate::ID` proves it is one of this program's.",
+        "The worst an operator can do is grow an already-correct account (a no-op) or pay rent",
+        "for someone else."
+      ],
+      "discriminator": [
+        190,
+        156,
+        163,
+        38,
+        24,
+        142,
+        63,
+        59
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner"
+        },
+        {
+          "name": "flower",
+          "docs": [
+            "`FlowerRecord`, so it cannot be loaded as a typed `Account`. The seeds bind it to",
+            "`owner` and `flower_index`, and `owner = crate::ID` proves it is one of this",
+            "program's accounts. The handler only ever calls `resize` on it."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  108,
+                  111,
+                  119,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "arg",
+                "path": "flowerIndex"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "flowerIndex",
+          "type": "u32"
+        }
+      ]
     },
     {
       "name": "privateHintCallback",
@@ -3265,7 +3448,7 @@ export type SecretGarden = {
         "reads at `ENTRY_SCORE_OFFSET`, same first-entry padding of the unused slots.",
         "",
         "The result lands in a PER-SHARD `RevealTop3V3Result` PDA, so the existing",
-        "`reveal_top3_v3_callback` is reused verbatim and the callback carries a CONSTANT 7",
+        "`reveal_top3_v5_callback` is reused verbatim and the callback carries a CONSTANT 7",
         "accounts regardless of round size."
       ],
       "discriminator": [
@@ -3352,7 +3535,7 @@ export type SecretGarden = {
           "name": "result",
           "docs": [
             "Per-shard result. Typed `RevealTop3V3Result` so the EXISTING",
-            "`reveal_top3_v3_callback` writes it with no new circuit or callback."
+            "`reveal_top3_v5_callback` writes it with no new circuit or callback."
           ],
           "writable": true
         },
@@ -3976,7 +4159,7 @@ export type SecretGarden = {
       ]
     },
     {
-      "name": "revealTop3V3Callback",
+      "name": "revealTop3V5Callback",
       "docs": [
         "ADDITIVE, VERIFICATION-ONLY callback for `reveal_top3_v3`. Records the circuit's RAW",
         "output into `RevealTop3V3Result`. It deliberately does NOT",
@@ -3984,14 +4167,14 @@ export type SecretGarden = {
         "the same round as the live reveal without disturbing it."
       ],
       "discriminator": [
-        34,
-        204,
-        3,
-        7,
-        104,
-        157,
-        53,
-        15
+        27,
+        116,
+        27,
+        55,
+        228,
+        21,
+        234,
+        185
       ],
       "accounts": [
         {
@@ -4030,7 +4213,7 @@ export type SecretGarden = {
                   "kind": "type",
                   "type": {
                     "defined": {
-                      "name": "revealTop3V3Output"
+                      "name": "revealTop3V5Output"
                     }
                   }
                 }
@@ -4283,7 +4466,7 @@ export type SecretGarden = {
           "docs": [
             "Offspring flower, pre-created here (Arcium callbacks cannot init accounts). Its",
             "index is the wallet's running `total_flowers` (starters occupy 0..=5). The genome",
-            "is written by `breed_callback`."
+            "is written by `breed_v3_callback`."
           ],
           "writable": true,
           "pda": {
@@ -5047,6 +5230,11 @@ export type SecretGarden = {
       "code": 6055,
       "name": "entryAlreadyReleased",
       "msg": "That entry has already released its flower"
+    },
+    {
+      "code": 6056,
+      "name": "flowerParentLimitReached",
+      "msg": "That flower has been used as a breeding parent the maximum number of times"
     }
   ],
   "types": [
@@ -5229,7 +5417,7 @@ export type SecretGarden = {
       }
     },
     {
-      "name": "breedOutput",
+      "name": "breedV3Output",
       "docs": [
         "The output of the callback instruction. Provided as a struct with ordered fields",
         "as anchor does not support tuples and tuple structs yet."
@@ -5241,7 +5429,7 @@ export type SecretGarden = {
             "name": "field0",
             "type": {
               "defined": {
-                "name": "breedOutputStruct0"
+                "name": "breedV3OutputStruct0"
               }
             }
           }
@@ -5249,7 +5437,7 @@ export type SecretGarden = {
       }
     },
     {
-      "name": "breedOutputStruct0",
+      "name": "breedV3OutputStruct0",
       "type": {
         "kind": "struct",
         "fields": [
@@ -5277,7 +5465,7 @@ export type SecretGarden = {
     {
       "name": "breedingComputedEvent",
       "docs": [
-        "Emitted by `breed_callback` when a breeding computation succeeds."
+        "Emitted by `breed_v3_callback` when a breeding computation succeeds."
       ],
       "type": {
         "kind": "struct",
@@ -6107,6 +6295,15 @@ export type SecretGarden = {
                 16
               ]
             }
+          },
+          {
+            "name": "timesBredAsParent",
+            "docs": [
+              "Appended LAST so every existing field offset is unchanged — but the account still",
+              "grows by one byte, so a pre-5E FlowerRecord (528 bytes) cannot be read as this struct",
+              "(529 bytes) until `migrate_flower` reallocs it. See that instruction."
+            ],
+            "type": "u8"
           }
         ]
       }
@@ -6956,58 +7153,6 @@ export type SecretGarden = {
       }
     },
     {
-      "name": "revealTop3V3Output",
-      "docs": [
-        "The output of the callback instruction. Provided as a struct with ordered fields",
-        "as anchor does not support tuples and tuple structs yet."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "field0",
-            "type": {
-              "defined": {
-                "name": "revealTop3V3OutputStruct0"
-              }
-            }
-          }
-        ]
-      }
-    },
-    {
-      "name": "revealTop3V3OutputStruct0",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "field0",
-            "type": "u16"
-          },
-          {
-            "name": "field1",
-            "type": "u8"
-          },
-          {
-            "name": "field2",
-            "type": "u16"
-          },
-          {
-            "name": "field3",
-            "type": "u8"
-          },
-          {
-            "name": "field4",
-            "type": "u16"
-          },
-          {
-            "name": "field5",
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
       "name": "revealTop3V3Result",
       "docs": [
         "Result record for a `reveal_top3_v3` computation. Used BOTH by the standalone",
@@ -7092,6 +7237,58 @@ export type SecretGarden = {
               "old finalized result accounts are never re-read, so this needs no migration.)"
             ],
             "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "revealTop3V5Output",
+      "docs": [
+        "The output of the callback instruction. Provided as a struct with ordered fields",
+        "as anchor does not support tuples and tuple structs yet."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "field0",
+            "type": {
+              "defined": {
+                "name": "revealTop3V5OutputStruct0"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "revealTop3V5OutputStruct0",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "field0",
+            "type": "u16"
+          },
+          {
+            "name": "field1",
+            "type": "u8"
+          },
+          {
+            "name": "field2",
+            "type": "u16"
+          },
+          {
+            "name": "field3",
+            "type": "u8"
+          },
+          {
+            "name": "field4",
+            "type": "u16"
+          },
+          {
+            "name": "field5",
+            "type": "u8"
           }
         ]
       }
