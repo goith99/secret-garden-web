@@ -412,10 +412,26 @@ export async function fetchReleasableEntries(
   const entries: { roundId: number; acc: IdlAccounts<SecretGarden>["competitionEntry"] }[] = [];
   for (let i = 0; i < entryPdas.length; i += CHUNK) {
     const slice = entryPdas.slice(i, i + CHUNK);
-    const accs = await program.account.competitionEntry.fetchMultiple(slice);
-    accs.forEach((acc, j) => {
+    // Decode ONE AT A TIME rather than via `fetchMultiple`, which rejects the whole batch if
+    // any single account fails to deserialize — and four entries on this program can never be
+    // deserialized again. They are stuck one byte short of the 5E layout because
+    // `migrate_entry` re-derives `rarity_snapshot` from the entry's FlowerRecord, and these
+    // four name a flower that its owner released and then deleted, so there is nothing left
+    // to read the rarity from. Un-migratable is not the same as harmful: all four are spent
+    // (Released, or Submitted against a flower that no longer exists), so none of them could
+    // ever be a releasable entry anyway. Skipping an undecodable account therefore loses
+    // nothing real, whereas throwing takes the whole Release panel down for that wallet.
+    const infos = await program.provider.connection.getMultipleAccountsInfo(slice);
+    infos.forEach((info, j) => {
+      if (!info) return;
+      let acc: IdlAccounts<SecretGarden>["competitionEntry"];
+      try {
+        acc = program.coder.accounts.decode("competitionEntry", info.data);
+      } catch {
+        return; // pre-5E leftover — see above
+      }
       // A spent entry can never become releasable again — drop it before we fetch its round.
-      if (acc && acc.status === EntryStatus.Submitted) {
+      if (acc.status === EntryStatus.Submitted) {
         entries.push({ roundId: i + j + 1, acc });
       }
     });
