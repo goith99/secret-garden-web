@@ -452,12 +452,11 @@ console.log("\n=== 7. reveal queue still fits with its compute-unit limit ===");
     new PublicKey(idl.address),
   )[0];
   const offset = new anchor.BN(Array.from(crypto.getRandomValues(new Uint8Array(8))));
-  // MAX_SHARD_SIZE entries — the largest shard the planner can produce — followed by their
-  // FlowerRecords. `reveal_top3_v5` ranks on `score * 8 + rarity` and reads each rarity from
-  // the entry's flower, so every QUEUE instruction now sends 2n remaining accounts, not n.
-  // Sizing this at n was a live under-measurement: it declared the worst-case shard "fits"
-  // while the real transaction carried 13 more addresses than the check ever serialized.
-  const entries = Array.from({ length: 13 * 2 }, () => ({
+  // MAX_SHARD_SIZE entries — the largest shard the planner can produce. ONE run: the rarity
+  // for `reveal_top3_v5`'s tiebreak rides on `entry.rarity_snapshot`, taken from the flower
+  // at submission, so the reveal needs no FlowerRecord accounts. Passing them here as a
+  // second run put the worst-case shard at 1580 B, over the 1232 B limit.
+  const entries = Array.from({ length: 13 }, () => ({
     pubkey: Keypair.generate().publicKey,
     isWritable: false,
     isSigner: false,
@@ -478,10 +477,8 @@ console.log("\n=== 7. reveal queue still fits with its compute-unit limit ===");
   const after = wireSize(withComputeUnitLimit(bare, REVEAL_CU_LIMIT));
   check(
     after <= PACKET_LIMIT,
-    `MAX_SHARD_SIZE (${13}) shard queue — ${13 * 2} accounts: entries + flowers — still fits`,
-    `${before} -> ${after} B (limit ${PACKET_LIMIT}). ` +
-      `With the rarity tiebreaker every QUEUE reveal sends 2n remaining accounts, so the ` +
-      `measured ceiling is 7 entries/shard (1184 B); n=8 is 1250 B. MAX_SHARD_SIZE is 13.`,
+    `MAX_SHARD_SIZE (${13}) shard queue — ${13} entry accounts — still fits`,
+    `${before} -> ${after} B (limit ${PACKET_LIMIT})`,
   );
   check(REVEAL_CU_LIMIT > 158_914, "the limit exceeds the measured 158,914 CU worst case", `${REVEAL_CU_LIMIT}`);
   check(
