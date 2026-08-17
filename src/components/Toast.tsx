@@ -5,6 +5,10 @@
  * `toast.info("…")` — info is the calm one, for something that simply didn't happen (a wallet
  * popup dismissed). That is not a failure and must not be dressed as one.
  *
+ * A caller that needs longer on screen passes a duration:  `toast.success("…", 6000)`. The
+ * timer is PER TOAST rather than one module-wide constant, so a message that wants more
+ * reading time cannot silently retime the transaction toasts around it.
+ *
  * Player vocabulary only — callers pass already-friendly messages.
  */
 import {
@@ -23,15 +27,18 @@ interface ToastItem {
   id: number;
   message: string;
   variant: ToastVariant;
+  /** How long this toast stays up. Defaults to DEFAULT_AUTO_DISMISS_MS. */
+  durationMs: number;
 }
 
 interface ToastApi {
-  success: (message: string) => void;
-  error: (message: string) => void;
-  info: (message: string) => void;
+  success: (message: string, durationMs?: number) => void;
+  error: (message: string, durationMs?: number) => void;
+  info: (message: string, durationMs?: number) => void;
 }
 
-const AUTO_DISMISS_MS = 4000;
+/** Default dwell time. Callers may override per toast — see ToastApi. */
+const DEFAULT_AUTO_DISMISS_MS = 4000;
 let nextId = 0;
 
 const ToastContext = createContext<ToastApi | null>(null);
@@ -46,9 +53,9 @@ export function useToast(): ToastApi {
 /** One toast row — owns its own auto-dismiss timer so the stack stays simple. */
 function ToastView({ toast, onClose }: { toast: ToastItem; onClose: (id: number) => void }) {
   useEffect(() => {
-    const t = window.setTimeout(() => onClose(toast.id), AUTO_DISMISS_MS);
+    const t = window.setTimeout(() => onClose(toast.id), toast.durationMs);
     return () => window.clearTimeout(t);
-  }, [toast.id, onClose]);
+  }, [toast.id, toast.durationMs, onClose]);
 
   const tone =
     toast.variant === "success"
@@ -87,15 +94,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((list) => list.filter((t) => t.id !== id));
   }, []);
 
-  const push = useCallback((message: string, variant: ToastVariant) => {
-    setToasts((list) => [...list, { id: nextId++, message, variant }]);
-  }, []);
+  const push = useCallback(
+    (message: string, variant: ToastVariant, durationMs: number = DEFAULT_AUTO_DISMISS_MS) => {
+      setToasts((list) => [...list, { id: nextId++, message, variant, durationMs }]);
+    },
+    [],
+  );
 
   const api = useMemo<ToastApi>(
     () => ({
-      success: (m) => push(m, "success"),
-      error: (m) => push(m, "error"),
-      info: (m) => push(m, "info"),
+      success: (m, durationMs) => push(m, "success", durationMs),
+      error: (m, durationMs) => push(m, "error", durationMs),
+      info: (m, durationMs) => push(m, "info", durationMs),
     }),
     [push],
   );

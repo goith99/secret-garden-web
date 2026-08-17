@@ -3,7 +3,9 @@ import { HybridPot } from "./HybridPot";
 import { EnvironmentSelector } from "./EnvironmentSelector";
 import { NightGardenScene } from "./NightGardenScene";
 import { StarterGarden } from "./StarterGarden";
-import { useGame } from "../game/GameContext";
+import { useEffect, useRef } from "react";
+import { useGame, MAX_BREEDS_PER_ROUND } from "../game/GameContext";
+import { useToast } from "./Toast";
 import { useRoundMetadata } from "../hooks/useRoundMetadata";
 
 /**
@@ -18,6 +20,14 @@ import { useRoundMetadata } from "../hooks/useRoundMetadata";
  * framed control strip below the scene. Transient breeding messages surface as fixed toasts so
  * they never grow the column height.
  */
+/**
+ * Dwell time for the breeds-remaining toast, deliberately longer than the 4s default the
+ * transaction toasts use. This one is a status figure the player has to read and hold
+ * ("3 of 5"), not a confirmation they already expected, so it earns the extra seconds.
+ * Passed per toast — see ToastApi — so it does not retime anything else.
+ */
+const BREEDS_TOAST_MS = 6000;
+
 export function Greenhouse() {
   const { breedError, bloomToast, retryRefresh, breedsRemaining, challenge } = useGame();
 
@@ -25,10 +35,44 @@ export function Greenhouse() {
   // garden until (or unless) Supabase says otherwise, so the scene never waits on a fetch.
   const { background } = useRoundMetadata(challenge.roundId);
 
-  // Informational only: stays quiet at a full cap (5), counts down as breeds are spent, and
-  // turns to a gentle amber warning once they're gone. Player vocabulary — no on-chain terms.
-  const showBreedsLeft = breedsRemaining < 5;
-  const breedsSpent = breedsRemaining <= 0;
+  // Breeds remaining surfaces as a TOAST, not as a line in the column.
+  //
+  // It used to be a `shrink-0` <p> between the scene and the controls strip. That put a
+  // ~14px permanent row into a `h-full` flex column whose only flexible child (the scene)
+  // has a hard `min-h-[200px]` floor — so once the viewport got short the column could no
+  // longer absorb it, overflowed, and the scene's clipped starter row collided with the
+  // text. Worse, the row appeared and disappeared with the count, so the layout shifted
+  // under the player mid-session. A fixed-position toast takes zero layout space and
+  // cannot collide with anything.
+  //
+  // Reuses the existing <Toast> system (bottom-center, z-[70], ✕ to close) rather than
+  // adding a second notification mechanism.
+  const toast = useToast();
+  // Previous value, so the toast fires on a real CHANGE rather than on every re-render.
+  // `null` until the first observation, which is what lets a page load that is ALREADY
+  // under the cap announce itself once.
+  const prevRemaining = useRef<number | null>(null);
+
+  useEffect(() => {
+    const prev = prevRemaining.current;
+    prevRemaining.current = breedsRemaining;
+
+    // Quiet at a full cap. `breedsRemaining` also defaults to the cap while the profile is
+    // still loading (and for a disconnected/standalone wallet), so this doubles as the
+    // guard against announcing a placeholder.
+    if (breedsRemaining >= MAX_BREEDS_PER_ROUND) return;
+    // Unchanged since the last observation — nothing happened worth interrupting for.
+    if (prev !== null && prev === breedsRemaining) return;
+
+    // Gold/⚠️ once they're gone, matching the amber the old line turned; mint/🌱 while
+    // counting down, which is informational rather than a problem.
+    if (breedsRemaining <= 0) toast.error("No breeds remaining this round", BREEDS_TOAST_MS);
+    else
+      toast.success(
+        `${breedsRemaining} of ${MAX_BREEDS_PER_ROUND} breeds remaining this round`,
+        BREEDS_TOAST_MS,
+      );
+  }, [breedsRemaining, toast]);
 
   return (
     // Desktop (lg+, matching App's 1024px layout switch) keeps the no-page-scroll contract:
@@ -75,19 +119,6 @@ export function Greenhouse() {
           <StarterGarden />
         </div>
       </div>
-
-      {/* Breeds remaining this round — small, informational, below the pot area. */}
-      {showBreedsLeft && (
-        <p
-          className={`shrink-0 text-center font-pixel text-[9px] uppercase tracking-wide ${
-            breedsSpent ? "text-garden-gold" : "text-garden-parch/40"
-          }`}
-        >
-          {breedsSpent
-            ? "No breeds remaining this round"
-            : `${breedsRemaining} of 5 breeds remaining this round`}
-        </p>
-      )}
 
       {/* Control dials — shrink-0 so the strip is never the element that gets clipped. */}
       <div className="gh-panel shrink-0 px-3 py-2">
