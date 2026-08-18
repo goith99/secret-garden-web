@@ -55,6 +55,7 @@ function makeMockNewborn(a: Flower, b: Flower, idx: number): Flower {
   return {
     id: `mock-flower-${idx}`,
     owner: a.owner,
+    timesBredAsParent: 0, // a newborn has never been a parent
     flowerIndex: idx,
     visualSpeciesId: 255,
     generation: Math.max(a.generation, b.generation) + 1,
@@ -111,6 +112,37 @@ export interface GardenInitial {
 
 /** Per-round breeding cap enforced on-chain (MAX_BREEDS_PER_ROUND). */
 export const MAX_BREEDS_PER_ROUND = 5;
+/**
+ * Per-FLOWER lifetime cap on being a breeding parent (constants.rs MAX_BREEDS_AS_PARENT).
+ * Distinct from MAX_BREEDS_PER_ROUND, which is per PLAYER per round and resets; this one is
+ * permanent and per flower. `start_breeding` checks BOTH parents and rejects a 4th use with
+ * FlowerParentLimitReached, which the wallet surfaces as a failed pre-send simulation — so
+ * the UI must refuse the selection rather than let it reach the wallet.
+ */
+export const MAX_BREEDS_AS_PARENT = 3;
+
+/** Anchor error code for FlowerParentLimitReached (programs/.../error.rs). */
+const ERR_FLOWER_PARENT_LIMIT = 6056;
+
+/**
+ * Does this failure come from the per-flower parent cap? Anchor surfaces the code in the
+ * message and in the simulation logs, and different wallets format it differently, so match
+ * both the decimal and hex spellings plus the error name rather than any one wallet's phrasing.
+ */
+function isParentLimitError(e: unknown): boolean {
+  const hay = [
+    e instanceof Error ? e.message : String(e),
+    // Anchor/web3 attach simulation logs on some error shapes.
+    ...(Array.isArray((e as { logs?: string[] })?.logs) ? (e as { logs: string[] }).logs : []),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return (
+    hay.includes("flowerparentlimitreached") ||
+    hay.includes(String(ERR_FLOWER_PARENT_LIMIT)) ||
+    hay.includes("0x" + ERR_FLOWER_PARENT_LIMIT.toString(16))
+  );
+}
 
 /** Hybrid collection cap enforced on-chain (FLOWER_COLLECTION_CAP). Starters don't count. */
 export const FLOWER_COLLECTION_CAP = 20;
@@ -163,6 +195,7 @@ interface GameContextValue {
    * back with release_flower is what clears this.
    */
   isBreedLocked: (flower: Flower) => boolean;
+  isParentCapped: (flower: Flower) => boolean;
   // ---- bringing a flower back from a finished round (release_flower) -------------------
   /** The finished round this flower can be brought back from, or null when it can't be. */
   releasableRoundOf: (flower: Flower) => number | null;
@@ -391,6 +424,15 @@ export function GameProvider({
     [],
   );
 
+  /**
+   * True once this flower has spent its lifetime parent budget. Unlike isBreedLocked this is
+   * permanent — no round change or Bring Back clears it — so the copy must not imply waiting.
+   */
+  const isParentCapped = useCallback(
+    (flower: Flower): boolean => flower.timesBredAsParent >= MAX_BREEDS_AS_PARENT,
+    [],
+  );
+
   // Breeds remaining this round. The on-chain counter is stale once the round advances:
   // it only applies when the player last bred in the CURRENT round; otherwise the cap is
   // full again. No profile (standalone/disconnected) → full cap, so the hint stays quiet.
@@ -534,6 +576,13 @@ export function GameProvider({
         );
         return;
       }
+      // Lifetime parent budget spent. Guards BOTH slots because placeInPot is the single
+      // path into either pot, and the card already refuses drag/tap — this catches anything
+      // that slips past (auto-place, keyboard, a stale card).
+      if (isParentCapped(flower)) {
+        setDropBlockedNotice(`Bred ${MAX_BREEDS_AS_PARENT}/${MAX_BREEDS_AS_PARENT} — cannot be a parent again`);
+        return;
+      }
       // A flower can't occupy both pots; if it's in the other pot, vacate that one.
       if (pot === "A") {
         setPotB((b) => (b?.id === flower.id ? null : b));
@@ -544,7 +593,7 @@ export function GameProvider({
       }
       setSelectedFlowerId(null);
     },
-    [isBreedLocked, isEnteredInCurrentRound],
+    [isBreedLocked, isEnteredInCurrentRound, isParentCapped],
   );
 
   const autoPlace = useCallback(
@@ -655,6 +704,13 @@ export function GameProvider({
             setBreedError(INSUFFICIENT_SOL_MSG);
           } else if (e instanceof TxError && e.kind === "network") {
             setBreedError(e.message);
+          } else if (isParentLimitError(e)) {
+            // Reachable only if a capped flower slipped past both the card gate and
+            // placeInPot (a stale card, a race with a concurrent breed). "Try again" would
+            // be actively wrong here — the cap is permanent, so name the real cause.
+            setBreedError(
+              `One of those flowers has already been bred ${MAX_BREEDS_AS_PARENT}/${MAX_BREEDS_AS_PARENT} times and cannot be a parent again. Pick a different flower.`,
+            );
           } else {
             setBreedError("Something went wrong during breeding. Try again.");
           }
@@ -1014,6 +1070,7 @@ export function GameProvider({
       releaseFlower,
       releaseNotice,
       isBreedLocked,
+      isParentCapped,
       releasableRoundOf,
       canBringBack,
       bringBackFlower,
@@ -1023,7 +1080,7 @@ export function GameProvider({
     [
       hint, hintBusy, hintNotice, canCheckMatch, checkMatch, dismissHint,
       hybridCount, collectionFull, releasingId, canRelease, releaseFlower, releaseNotice,
-      isBreedLocked, releasableRoundOf, canBringBack, bringBackFlower, bringingBackId, bringBackNotice,
+      isBreedLocked, isParentCapped, releasableRoundOf, canBringBack, bringBackFlower, bringingBackId, bringBackNotice,
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
       newBloom, roundOpen, hasEnteredCurrentRound, isEnteredInCurrentRound, breedsRemaining, breedError, breedNotice, dropBlockedNotice, journal, challenge, winners, activeTab, submittingId,
       bloomToast, authority, profileNeedsMigration, migrating, migrateError, migrateProfile, refetchGarden,

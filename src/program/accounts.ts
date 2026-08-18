@@ -204,6 +204,7 @@ function mapFlower(pda: PublicKey, f: RawFlower): Flower {
     parentA: parentA === DEFAULT_PUBKEY ? null : parentA,
     parentB: parentB === DEFAULT_PUBKEY ? null : parentB,
     createdAt: f.createdAt.toNumber(),
+    timesBredAsParent: f.timesBredAsParent ?? 0,
   };
 }
 

@@ -33,6 +33,7 @@ const COLLECTION_FULL_MSG = "Your collection is full. Release a flower to make r
 const BLOOM_PLACEHOLDER: Flower = {
   id: "new-bloom",
   owner: "",
+  timesBredAsParent: 0,
   flowerIndex: 0,
   visualSpeciesId: 255,
   generation: 1,

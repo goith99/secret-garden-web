@@ -66,6 +66,13 @@ export interface Flower {
   parentA: string | null; // pubkey | none
   parentB: string | null;
   createdAt: number; // unix seconds (i64 on-chain)
+  /**
+   * How many times this flower has already been used as a breeding parent.
+   * The program caps this at MAX_BREEDS_AS_PARENT and rejects a 4th attempt with
+   * FlowerParentLimitReached, so the UI has to gate on it — otherwise the player only
+   * discovers the limit as a failed wallet simulation.
+   */
+  timesBredAsParent: number; // u8
 }
 
 /** Mirror of CompetitionRound — the "Daily Challenge" the player breeds toward. */

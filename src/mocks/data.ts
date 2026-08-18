@@ -27,10 +27,12 @@ function flower(
   rarity: number,
   stability: number,
   genomeStatus: Flower["genomeStatus"] = GenomeStatus.Encrypted,
+  timesBredAsParent = 0,
 ): Flower {
   return {
     id: `mock-flower-${flowerIndex}`,
     owner: MOCK_OWNER,
+    timesBredAsParent,
     flowerIndex,
     visualSpeciesId,
     generation,

@@ -1,7 +1,7 @@
 import { useEffect, useState, type DragEvent, type MouseEvent } from "react";
 import type { Flower } from "../types";
 import { FlowerStatus, GenomeStatus } from "../types";
-import { useGame } from "../game/GameContext";
+import { useGame, MAX_BREEDS_AS_PARENT } from "../game/GameContext";
 import { FlowerSprite } from "./FlowerSprite";
 import { Badge } from "./Badge";
 import { HintPanel } from "./HintPanel";
@@ -55,6 +55,7 @@ export function FlowerCard({
     releasingId,
     releaseNotice,
     isBreedLocked,
+    isParentCapped,
     releasableRoundOf,
     canBringBack,
     bringBackFlower,
@@ -81,6 +82,12 @@ export function FlowerCard({
   // fails simulation with FlowerNotActive.) A finished round's flower is one click from usable —
   // see "Bring Back" below.
   const locked = isBreedLocked(flower);
+  // Separate from `locked` on purpose: a Submitted flower is temporarily held back and the
+  // copy says "wait" or "bring it back", whereas a capped flower is permanently done as a
+  // parent. Conflating them would tell the player to wait for something that never clears.
+  const parentCapped = isParentCapped(flower);
+  // Either condition means this card cannot go into a pot.
+  const cannotParent = locked || parentCapped;
   // Which of the two lockings this is, purely for wording: the live round means "wait", a
   // finished round means "bring it back".
   const inLiveRound = isEnteredInCurrentRound(flower);
@@ -134,8 +141,8 @@ export function FlowerCard({
   };
 
   const onDragStart = (e: DragEvent<HTMLButtonElement>) => {
-    if (locked) {
-      e.preventDefault(); // a locked flower can't be dragged to a pot
+    if (cannotParent) {
+      e.preventDefault(); // a locked or parent-capped flower can't be dragged to a pot
       return;
     }
     e.dataTransfer.setData("text/plain", flower.id);
@@ -143,7 +150,7 @@ export function FlowerCard({
   };
 
   const onActivateCard = () => {
-    if (locked) return; // tap does nothing — the tooltip below explains why
+    if (cannotParent) return; // tap does nothing — the badge/tooltip explains why
     onActivate(flower);
   };
 
@@ -163,7 +170,7 @@ export function FlowerCard({
     <div className="flex w-full min-w-0 flex-col gap-1">
       <button
         type="button"
-        draggable={!locked}
+        draggable={!cannotParent}
         onDragStart={onDragStart}
         onClick={onActivateCard}
         aria-pressed={selected}
@@ -183,6 +190,14 @@ export function FlowerCard({
         </span>
         <div className="flex flex-wrap items-center justify-center gap-1">
           <Badge className={`${r.text} ${r.ring}`}>{r.label}</Badge>
+          {parentCapped && (
+            <Badge
+              className="border-garden-gold text-garden-gold"
+              title="This flower has been used as a breeding parent the maximum number of times. It can still be submitted to challenges, hinted and closed — it just cannot be a parent again."
+            >
+              Bred {flower.timesBredAsParent}/{MAX_BREEDS_AS_PARENT}
+            </Badge>
+          )}
           <Badge className="border-garden-moss text-garden-parch" title="Generation">
             G{flower.generation}
           </Badge>
