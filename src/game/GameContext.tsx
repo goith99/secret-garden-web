@@ -123,13 +123,26 @@ export const MAX_BREEDS_AS_PARENT = 3;
 
 /** Anchor error code for FlowerParentLimitReached (programs/.../error.rs). */
 const ERR_FLOWER_PARENT_LIMIT = 6056;
+/** Anchor error code for BreedingLimitReached — the PER-ROUND, per-player budget. */
+const ERR_BREEDING_LIMIT = 6027;
+
+/**
+ * The per-round budget message. Unlike the parent cap this one DOES clear by itself, so the
+ * copy has to say when — a player told only "limit reached" has no idea whether to wait a
+ * minute or give up.
+ */
+export const BREED_LIMIT_MSG =
+  `You've used all ${MAX_BREEDS_PER_ROUND} breeding attempts this round. More unlock when the next round opens.`;
+
+/** Shown when we cannot yet prove how much budget is left (see breedBudgetKnown). */
+const BREED_BUDGET_UNKNOWN_MSG = "Checking your breeding attempts — one moment.";
 
 /**
  * Does this failure come from the per-flower parent cap? Anchor surfaces the code in the
  * message and in the simulation logs, and different wallets format it differently, so match
  * both the decimal and hex spellings plus the error name rather than any one wallet's phrasing.
  */
-function isParentLimitError(e: unknown): boolean {
+function matchesAnchorError(e: unknown, code: number, name: string): boolean {
   const hay = [
     e instanceof Error ? e.message : String(e),
     // Anchor/web3 attach simulation logs on some error shapes.
@@ -138,10 +151,19 @@ function isParentLimitError(e: unknown): boolean {
     .join(" ")
     .toLowerCase();
   return (
-    hay.includes("flowerparentlimitreached") ||
-    hay.includes(String(ERR_FLOWER_PARENT_LIMIT)) ||
-    hay.includes("0x" + ERR_FLOWER_PARENT_LIMIT.toString(16))
+    hay.includes(name.toLowerCase()) ||
+    hay.includes(String(code)) ||
+    hay.includes("0x" + code.toString(16))
   );
+}
+
+function isParentLimitError(e: unknown): boolean {
+  return matchesAnchorError(e, ERR_FLOWER_PARENT_LIMIT, "FlowerParentLimitReached");
+}
+
+/** The per-round budget, exhausted. Distinct from the per-flower parent cap. */
+function isBreedLimitError(e: unknown): boolean {
+  return matchesAnchorError(e, ERR_BREEDING_LIMIT, "BreedingLimitReached");
 }
 
 /** Hybrid collection cap enforced on-chain (FLOWER_COLLECTION_CAP). Starters don't count. */
@@ -209,6 +231,7 @@ interface GameContextValue {
   bringBackNotice: { flowerId: string; message: string } | null;
   /** How many crosses the player can still start this round (5 when standalone/no profile). */
   breedsRemaining: number;
+  breedBudgetKnown: boolean;
   // ---- hybrid collection cap (starters excluded, mirroring the on-chain accounting) ----
   /** Live hybrids the player holds — `total_flowers - STARTER_COUNT`, floored at 0. */
   hybridCount: number;
@@ -436,6 +459,16 @@ export function GameProvider({
   // Breeds remaining this round. The on-chain counter is stale once the round advances:
   // it only applies when the player last bred in the CURRENT round; otherwise the cap is
   // full again. No profile (standalone/disconnected) → full cap, so the hint stays quiet.
+  //
+  // FAIL CLOSED ON UNKNOWN. These two fields are only present once a real PlayerProfile has
+  // decoded. They are absent while a connected wallet's profile is still loading, and a
+  // pre-5D profile reports them as 0 because the old layout has no such fields at all. The
+  // previous `?? 0` collapsed both of those into "lastBreedRound !== roundId", which reads as
+  // a FULL budget — so the one state where we knew least was the state that most eagerly let
+  // a doomed transaction through to the wallet. That is the pre-send warning players saw.
+  // `breedBudgetKnown` keeps "we have not looked yet" separate from "we looked and it is 0".
+  const breedBudgetKnown =
+    initial?.breedsThisRound !== undefined && initial?.lastBreedRound !== undefined;
   const breedsThisRound = initial?.breedsThisRound ?? 0;
   const lastBreedRound = initial?.lastBreedRound ?? 0;
   const breedsRemaining =
@@ -639,7 +672,22 @@ export function GameProvider({
     // Real mode only: never build a breed tx when the per-round cap is spent, the collection
     // is full (the program would reject it with CollectionFull), OR the profile still needs
     // its one-time migration. The Hybrid Pot shows the matching message in each case.
-    if (onRefetch && (breedsRemaining <= 0 || collectionFull || profileNeedsMigration)) return;
+    // Was a bare `return`: both pots filled and nothing happened, with no explanation. The
+    // player has no way to tell a spent budget from a broken app. Each blocked case now says
+    // which one it is. collectionFull and profileNeedsMigration keep their existing surfaces
+    // (the Hybrid Pot renders those), so only the budget cases set an error here.
+    if (onRefetch) {
+      if (!breedBudgetKnown) {
+        // Fail closed: we cannot prove there is budget left, so do not let it reach the wallet.
+        setBreedError(BREED_BUDGET_UNKNOWN_MSG);
+        return;
+      }
+      if (breedsRemaining <= 0) {
+        setBreedError(BREED_LIMIT_MSG);
+        return;
+      }
+      if (collectionFull || profileNeedsMigration) return;
+    }
     clearTimers();
     setBreedError(null);
     setNewBloom(null);
@@ -704,6 +752,9 @@ export function GameProvider({
             setBreedError(INSUFFICIENT_SOL_MSG);
           } else if (e instanceof TxError && e.kind === "network") {
             setBreedError(e.message);
+          } else if (isBreedLimitError(e)) {
+            // Reachable if the client's budget view was stale when the tx was built.
+            setBreedError(BREED_LIMIT_MSG);
           } else if (isParentLimitError(e)) {
             // Reachable only if a capped flower slipped past both the card gate and
             // placeInPot (a stale card, a race with a concurrent breed). "Try again" would
@@ -718,7 +769,7 @@ export function GameProvider({
         }
       }
     })();
-  }, [bothPotsFilled, activePhase, potA, potB, environment, actions, onRefetch, clearTimers, breedsRemaining, collectionFull, profileNeedsMigration]);
+  }, [bothPotsFilled, activePhase, potA, potB, environment, actions, onRefetch, clearTimers, breedsRemaining, breedBudgetKnown, collectionFull, profileNeedsMigration]);
 
   // Real mode: the hybrid is already on-chain. Reset to idle immediately so the player can
   // keep playing, then refetch to reveal it. A refetch failure NEVER tears down the game
@@ -1028,6 +1079,7 @@ export function GameProvider({
       hasEnteredCurrentRound,
       isEnteredInCurrentRound,
       breedsRemaining,
+      breedBudgetKnown,
       breedError,
       breedNotice,
       dropBlockedNotice,
@@ -1082,7 +1134,7 @@ export function GameProvider({
       hybridCount, collectionFull, releasingId, canRelease, releaseFlower, releaseNotice,
       isBreedLocked, isParentCapped, releasableRoundOf, canBringBack, bringBackFlower, bringingBackId, bringBackNotice,
       shelf, potA, potB, selectedFlowerId, environment, phase, bothPotsFilled, isCycling,
-      newBloom, roundOpen, hasEnteredCurrentRound, isEnteredInCurrentRound, breedsRemaining, breedError, breedNotice, dropBlockedNotice, journal, challenge, winners, activeTab, submittingId,
+      newBloom, roundOpen, hasEnteredCurrentRound, isEnteredInCurrentRound, breedsRemaining, breedBudgetKnown, breedError, breedNotice, dropBlockedNotice, journal, challenge, winners, activeTab, submittingId,
       bloomToast, authority, profileNeedsMigration, migrating, migrateError, migrateProfile, refetchGarden,
       selectFlower, placeInPot, autoPlace, clearPot,
       setEnvironment, startCrossbreed, collectBloom, resetAfterFailure, canSubmit,
