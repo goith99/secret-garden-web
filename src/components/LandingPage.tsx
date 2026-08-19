@@ -63,12 +63,12 @@ const ROADMAP: { status: RoadmapStatus; title: string; body: string }[] = [
     body: "Quick matches for players who just want to breed and chill — no deadline pressure, no challenge stakes, just pure crossbreeding fun.",
   },
   {
-    status: "NEXT",
+    status: "FUTURE",
     title: "Achievements & Streaks",
     body: "Daily login rewards, breeding streaks, and collector badges for your rarest blooms.",
   },
   {
-    status: "NEXT",
+    status: "FUTURE",
     title: "Seasonal Events",
     body: "Limited-time traits, special community challenges, and collaborative breeding events with the Arcium community.",
   },
@@ -214,9 +214,20 @@ function HeroParticles() {
   );
 }
 
-/** The animated visual at the top of each feature card (in place of a static icon/screenshot). */
+/**
+ * The animated visual at the top of each feature card (in place of a static icon/screenshot).
+ *
+ * All three are drawn from the same primitives — glowing dots in the garden palette, inside an
+ * identical h-12 frame — so the row reads as one set. It previously mixed this hand-built dot
+ * animation with two emoji at different sizes, one of them boxed and one not, which made the
+ * three cards look like three unrelated designs sitting in a row.
+ *
+ * Every keyframe rests at its own 0%/100% state, so the global prefers-reduced-motion rule in
+ * index.css leaves a calm, complete picture rather than an empty frame.
+ */
 function FeatureVisual({ kind }: { kind: (typeof FEATURES)[number]["key"] }) {
   if (kind === "breed") {
+    // Two petals drift toward a glowing core and back: a cross in progress.
     return (
       <div className="flex h-12 items-center justify-center gap-1.5" aria-hidden>
         <span className="sg-merge-left h-3.5 w-3.5 rounded-full bg-garden-mint shadow-[0_0_8px_rgba(143,214,166,0.6)]" />
@@ -226,16 +237,21 @@ function FeatureVisual({ kind }: { kind: (typeof FEATURES)[number]["key"] }) {
     );
   }
   if (kind === "compete") {
+    // A podium: the gold bloom lifts clear of the field. Dot size carries the rank, and the
+    // raise is a static margin — so the shape survives even with motion turned off.
     return (
-      <div className="flex h-12 items-center justify-center" aria-hidden>
-        <span className="sg-trophy-glow text-4xl">🏆</span>
+      <div className="flex h-12 items-end justify-center gap-1.5 pb-2.5" aria-hidden>
+        <span className="h-2.5 w-2.5 rounded-full bg-garden-parch/50" />
+        <span className="sg-podium-win mb-2 h-3.5 w-3.5 rounded-full bg-garden-gold shadow-[0_0_8px_rgba(230,194,92,0.7)]" />
+        <span className="h-2 w-2 rounded-full bg-garden-parch/35" />
       </div>
     );
   }
+  // A sealed bloom: the trait inside brightens but never fully resolves behind its ring.
   return (
     <div className="flex h-12 items-center justify-center" aria-hidden>
-      <span className="sg-shimmer inline-flex h-11 w-11 items-center justify-center rounded-lg border border-garden-cyan/40 bg-garden-deep/50 text-2xl">
-        🔒
+      <span className="sg-seal-ring flex h-9 w-9 items-center justify-center rounded-full border border-garden-cyan/50">
+        <span className="sg-seal-core h-3 w-3 rounded-full bg-garden-cyan shadow-[0_0_8px_rgba(108,199,207,0.6)]" />
       </span>
     </div>
   );
@@ -352,8 +368,8 @@ export function LandingPage() {
             <p className="max-w-2xl font-body text-sm leading-relaxed text-garden-parch/90 sm:text-base">
               Every flower&apos;s genome is encrypted and scored with Arcium multi-party
               computation. Trait data is split across an MPC network and the challenge scores are
-              computed on the encrypted values directly — so no one ever sees your raw traits,
-              not even the operator running the round. Your strategy stays sealed until the
+              computed on the encrypted values directly — so no one ever sees your flower&apos;s
+              genome, not even the operator running the round. Your strategy stays sealed until the
               winners are revealed.
             </p>
             <a

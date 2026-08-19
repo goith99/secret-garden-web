@@ -107,34 +107,23 @@
 .sg-merge-right { animation: sg-merge-right 4s ease-in-out infinite; }
 .sg-merge-core  { animation: sg-merge-core 4s ease-in-out infinite; }
 
-/* "Compete" card: a soft gold glow pulse on the trophy. */
-@keyframes sg-trophy-glow {
-  0%, 100% { filter: drop-shadow(0 0 2px rgba(230, 194, 92, 0.4)); transform: scale(1); }
-  50%      { filter: drop-shadow(0 0 10px rgba(230, 194, 92, 0.85)); transform: scale(1.05); }
+/* "Compete" card: the winning bloom lifts clear of the field, then settles back. The podium
+   shape itself is static margin — this only adds the lift and the glow. */
+@keyframes sg-podium-win {
+  0%, 100% { transform: translateY(0);    filter: drop-shadow(0 0 2px rgba(230, 194, 92, 0.4)); }
+  50%      { transform: translateY(-3px); filter: drop-shadow(0 0 9px rgba(230, 194, 92, 0.85)); }
 }
-.sg-trophy-glow {
-  animation: sg-trophy-glow 3.5s ease-in-out infinite;
-}
+.sg-podium-win { animation: sg-podium-win 3.5s ease-in-out infinite; }
 
-/* "Privacy" card: a subtle shine sweep across the lock, like an encrypted shimmer. */
-.sg-shimmer {
-  position: relative;
-  overflow: hidden;
+/* "Privacy" card: the sealed trait brightens behind its ring but never fully resolves — it
+   rests visible (not blank) so the mark still reads with motion turned off. */
+@keyframes sg-seal-core {
+  0%, 100% { opacity: 0.45; transform: scale(0.9); }
+  50%      { opacity: 0.9;  transform: scale(1); }
 }
-.sg-shimmer::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    120deg,
-    transparent 35%,
-    rgba(245, 239, 218, 0.4) 50%,
-    transparent 65%
-  );
-  transform: translateX(-150%);
-  animation: sg-shine 4.5s ease-in-out infinite;
+@keyframes sg-seal-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(108, 199, 207, 0); }
+  50%      { box-shadow: 0 0 10px 0 rgba(108, 199, 207, 0.35); }
 }
-@keyframes sg-shine {
-  0%        { transform: translateX(-150%); }
-  55%, 100% { transform: translateX(150%); }
-}
+.sg-seal-core { animation: sg-seal-core 4.5s ease-in-out infinite; }
+.sg-seal-ring { animation: sg-seal-ring 4.5s ease-in-out infinite; }

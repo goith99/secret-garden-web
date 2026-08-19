@@ -183,7 +183,14 @@ export function DocsPage() {
                 <>Wait for the cross to complete (a few seconds, powered by Arcium MPC)</>,
                 <>Your new hybrid flower appears — <strong className="text-garden-cream">Save to Collection</strong> to keep it (you can enter it in a challenge later, from your collection)</>,
               ]}
-              note={<>You get <strong>5 breeding attempts</strong> per round.</>}
+              note={
+                <>
+                  Two limits apply. You get <strong>5 breeding attempts</strong> per round, and
+                  each flower can be used as a parent <strong>3 times</strong> — after that it
+                  stays in your collection and can still enter challenges, but can&apos;t be
+                  crossed again.
+                </>
+              }
             />
           </div>
 
